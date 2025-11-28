@@ -6,4 +6,4 @@
 
 # 忽略 Python 编译文件
 __pycache__/
-*.pyc
+StarFront_CDN_Trace_Dataset.csv
