@@ -50,7 +50,6 @@ class Content:
             return self.id == other.id # 若两个对象的 id 相同，则两个对象是一个东西
         return False
 
-
 class Node:
     def __init__(self, node_id, node_type, capacity):
         self.id = node_id
@@ -75,7 +74,6 @@ class Node:
             return True # 进行缓存
         return False
 
-
 class User(Node):
     def __init__(self, user_id, lat, lon):
         super().__init__(user_id, 'user', capacity=0)
@@ -85,7 +83,6 @@ class User(Node):
         self.position[0] = EARTH_RADIUS * math.cos(rad_lat) * math.cos(rad_lon)
         self.position[1] = EARTH_RADIUS * math.cos(rad_lat) * math.sin(rad_lon)
         self.position[2] = EARTH_RADIUS * math.sin(rad_lat)
-
 
 class Satellite(Node):
     def __init__(self, sat_id, tle_line1, tle_line2, capacity=1024*10):
@@ -228,21 +225,29 @@ class MegaConstellation:
     
     def load_tle_file(self, filename, node_type):
         with open(filename, 'r') as f:
-            lines = f.readlines()
+            lines = f.readlines() # 将整个文件的每一行作为一个字符串，存入列表 lines
         
-        for i in range(0, len(lines), 3):
-            name = lines[i].strip()
-            l1 = lines[i+1].strip()
-            l2 = lines[i+2].strip()
+        # 检查行数是否符合 3 的倍数
+        if len(lines) % 3 != 0:
+            print(f"Warning: File {filename} has {len(lines)} lines, which is not divisible by 3. Some data may be lost.")
+
+        # TLE 标准格式通常是3行一组，每次循环跳3行
+        for i in range(0, len(lines), 3): 
+            name = lines[i].strip() # 提取名称
+            l1 = lines[i+1].strip() # 提取第一行轨道参数
+            l2 = lines[i+2].strip() # 提取第二行轨道参数
             
             if node_type == 'satellite':
-                node = Satellite(name, l1, l2)
-                self.satellites[name] = node
+                node = Satellite(name, l1, l2) # 创建 Satellite 对象
+                self.satellites[name] = node # 存入 self.satellites 字典
             elif node_type == 'sdc':
                 node = SpaceDataCenter(name, l1, l2)
                 self.sdcs[name] = node
+            else:
+                raise ValueError(f"Unknown node_type: {node_type}") # 类型不对直接报错
             
-            self.graph.add_node(name, type=node_type)
+            # 将节点添加到 NetworkX 图中
+            self.graph.add_node(name, type=node_type) 
             
     def load_gs_csv(self, filename):
         with open(filename, 'r') as f:
