@@ -239,7 +239,7 @@ class MegaConstellation:
             
             if node_type == 'satellite':
                 node = Satellite(name, l1, l2) # 创建 Satellite 对象
-                self.satellites[name] = node # 存入 self.satellites 字典
+                self.satellites[name] = node # 存入 self.satellites 字典，name 为 key，node 为 value
             elif node_type == 'sdc':
                 node = SpaceDataCenter(name, l1, l2)
                 self.sdcs[name] = node
@@ -266,7 +266,7 @@ class MegaConstellation:
 
     def _start_offset(self, f, target_time: float, file_size: int) -> int:
         """
-        二分法查找对应时间戳开始的行
+        二分法查找对应时间戳开始的行，作为加载 Trace 文件的辅助
         """
         low = 0
         high = file_size
@@ -318,7 +318,7 @@ class MegaConstellation:
 
     def load_trace_batch(self, filename: str, time_window_start: float, duration: float):
         """
-        读取trace文件
+        读取trace文件，返回时间戳、内容类
         """
         requests = []
         time_window_end = time_window_start + duration # 不在循环中计算
@@ -350,11 +350,11 @@ class MegaConstellation:
                     c_size = float(row[3]) # 内容大小，单位B(Byte)
                     
                     if c_id not in self.contents:
-                        self.contents[c_id] = Content(c_id, c_size)
+                        self.contents[c_id] = Content(c_id, c_size) # 存入字典，c_id 为 key ，content 类为 value
                     
                     requests.append({
-                        'time': ts,
-                        'content': self.contents[c_id]
+                        'time': ts, 
+                        'content': self.contents[c_id] # 列表中为整个内容类，可通过ID查找
                     })
                     
         except FileNotFoundError:
