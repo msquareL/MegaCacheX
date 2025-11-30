@@ -8,10 +8,15 @@ import networkx as nx
 from datetime import datetime, timedelta
 from sgp4.api import Satrec, jday
 
-# --- 物理常数与全局配置 ---
+# 物理常数
 SPEED_OF_LIGHT = 299792.458  # km/s (c)
-SPEED_OF_FIBER = SPEED_OF_LIGHT * 0.67  # 光纤光速 (km/s)
+SPEED_OF_FIBER = SPEED_OF_LIGHT * 0.667  # 光纤光速 (km/s)
 EARTH_RADIUS = 6371.0        # km
+
+# 链路带宽配置 (单位: MB/s)
+BANDWIDTH_ISL = 1250.0  # 星间链路 (10 Gbps)
+BANDWIDTH_GSL = 62.5    # 星地链路 (500 Mbps)
+BANDWIDTH_IGL = 2500.0  # 地面光纤 (20 Gbps)
 
 # 参考论文 Table I 的成本参数 (归一化 0.0 - 1.0)
 COST_PARAMS = {
@@ -434,38 +439,66 @@ class MegaConstellation:
                     target_sat_id = sat_ids[idx]
                     self.graph.add_edge(gs.id, target_sat_id, weight=d, type='GSL')
 
-    def ospc_routing(self, v_start, v_end):
+    def get_link_delay(self, u, v, content_size):
+        """
+        辅助函数：计算两点间特定内容的传输总延迟
+        """
+        edge = self.graph[u][v]
+        dist = edge['weight']
+        link_type = edge['type']
+        
+        if link_type == 'ISL':
+            bandwidth = BANDWIDTH_ISL
+            prop_speed = SPEED_OF_LIGHT
+        elif link_type == 'GSL':
+            bandwidth = BANDWIDTH_GSL
+            prop_speed = SPEED_OF_LIGHT
+        else: # IGL
+            bandwidth = BANDWIDTH_IGL
+            prop_speed = SPEED_OF_FIBER
+
+        # 传播延迟 (物理距离 / 速度)
+        prop_delay = dist / prop_speed
+
+        # 传输延迟 (内容大小 / 带宽)
+        if content_size > 0:
+            trans_delay = content_size / bandwidth
+        else:
+            trans_delay = 0.0
+            
+        return prop_delay + trans_delay
+
+    def ospc_routing(self, v_start, v_end, content_size):
         """OSPC路由"""
         # 边界检查
-        if v not in self.graph or v_end not in self.graph:
+        if v_start not in self.graph or v_end not in self.graph:
             return None
 
         # 所有节点距离赋值为无穷
-        dist = {node: float('inf') for node in self.graph.nodes()}
+        delay = {node: float('inf') for node in self.graph.nodes()}
         # 
         prev = {node: None for node in self.graph.nodes()}
-        dist[v_start] = 0.0
+        delay[v_start] = 0.0
 
         Q = [(0.0, v_start)] # 创建优先列表
 
         while Q:
             # 弹出堆中延迟最小的节点
-            current_dist, u = heapq.heappop(Q)
+            current_delay, u = heapq.heappop(Q)
 
-            if current_dist > dist[u]:
+            if current_delay > delay[u]:
                 continue
-
-            # 终点
-            if u == v_end:
+            if u == v_end: # 终点
                 break
 
             for v in self.graph.neighbors(u):
-                edge_weight = self.graph[u][v].get('weight', float('inf'))
                 
-                alt = dist[u] + edge_weight
+                edge_delay = self.get_link_delay(u, v, content_size)
+                
+                alt = delay[u] + edge_delay
 
-                if alt < dist[v]:
-                    dist[v] = alt
+                if alt < delay[v]:
+                    delay[v] = alt
                     prev[v] = u
                     
                     heapq.heappush(Q, (alt, v))
@@ -483,11 +516,6 @@ class MegaConstellation:
         path.reverse() # 反转列表
         
         return path
-    
-        # try:
-        #     return nx.shortest_path(self.graph, v_start, v_end, weight='weight')
-        # except:
-        #     return None
         
     def calculate_path_latency(self, user_position, path_node_ids, propagation_factor=1.0):
         """
