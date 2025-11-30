@@ -172,8 +172,8 @@ def run_simulation():
     start_timestamp = get_trace_start_time(TRACE_FILE)
     print(f"仿真起始时间戳为: {start_timestamp}")
 
-    simulation_duration = 60000 # 仿真持续时间，单位秒
-    time_step = 60            # 每 10 秒更新一次拓扑
+    simulation_duration = 6000 # 仿真持续时间，单位秒
+    time_step = 60             # 步长
     
     current_time = start_timestamp
     end_time = start_timestamp + simulation_duration
