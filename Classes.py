@@ -1,6 +1,7 @@
 import os
 import math
 import csv
+import heapq
 import numpy as np
 import networkx as nx
 from datetime import datetime, timedelta
@@ -224,6 +225,7 @@ class MegaConstellation:
         self.contents = {} 
     
     def load_tle_file(self, filename, node_type):
+        """加载TLE文件"""
         with open(filename, 'r') as f:
             lines = f.readlines() # 将整个文件的每一行作为一个字符串，存入列表 lines
         
@@ -250,6 +252,7 @@ class MegaConstellation:
             self.graph.add_node(name, type=node_type) 
             
     def load_gs_csv(self, filename):
+        """加载GS节点"""
         with open(filename, 'r') as f:
             reader = csv.reader(f)
             next(reader) 
@@ -261,7 +264,7 @@ class MegaConstellation:
                     gs = GroundStation(name, lat, lon)
                     self.ground_stations[name] = gs
                     self.graph.add_node(name, type='ground_station')
-                except ValueError:
+                except (ValueError, IndexError):
                     continue
 
     def _start_offset(self, f, target_time: float, file_size: int) -> int:
@@ -414,10 +417,59 @@ class MegaConstellation:
                 self.graph.add_edge(gs.id, nearest.id, weight=min_d/SPEED_OF_LIGHT, type='GSL')
 
     def ospc_routing(self, source_id, target_id):
-        try:
-            return nx.shortest_path(self.graph, source_id, target_id, weight='weight')
-        except:
+        """OSPC路由"""
+        # 边界检查
+        if source_id not in self.graph or target_id not in self.graph:
             return None
+
+        # 所有节点距离赋值为无穷
+        dist = {node: float('inf') for node in self.graph.nodes()}
+        # 
+        prev = {node: None for node in self.graph.nodes()}
+        dist[source_id] = 0.0
+
+        Q = [(0.0, source_id)] # 创建优先列表
+
+        while Q:
+            # 弹出堆中延迟最小的节点
+            current_dist, u = heapq.heappop(Q)
+
+            if current_dist > dist[u]:
+                continue
+
+            # 终点
+            if u == target_id:
+                break
+
+            for v in self.graph.neighbors(u):
+                edge_weight = self.graph[u][v].get('weight', float('inf'))
+                
+                alt = dist[u] + edge_weight
+
+                if alt < dist[v]:
+                    dist[v] = alt
+                    prev[v] = u
+                    
+                    heapq.heappush(Q, (alt, v))
+
+        path = []
+        curr = target_id
+        
+        if prev[curr] is None and curr != source_id:
+            return None # 无法到达
+
+        while curr is not None:
+            path.append(curr)
+            curr = prev[curr]
+        
+        path.reverse() # 反转列表
+        
+        return path
+    
+        # try:
+        #     return nx.shortest_path(self.graph, source_id, target_id, weight='weight')
+        # except:
+        #     return None
         
     def calculate_path_latency(self, user_position, path_node_ids, propagation_factor=1.0):
         """
