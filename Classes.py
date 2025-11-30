@@ -2,6 +2,7 @@ import os
 import math
 import csv
 import heapq
+from scipy.spatial import cKDTree
 import numpy as np
 import networkx as nx
 from datetime import datetime, timedelta
@@ -367,68 +368,85 @@ class MegaConstellation:
         return requests
 
     def update_topology(self, current_timestamp):
-        """
-        更新全网拓扑，传入的是绝对时间戳 (current_timestamp)
-        """
+        """更新全网拓扑，使用 KD-Tree 实现 O(N log N) 的近邻搜索"""
         self.graph.clear_edges()
         
-        # 1. 更新轨道节点位置 (传入绝对时间)
-        all_orbit_nodes = list(self.satellites.values()) + list(self.sdcs.values())
-        for node in all_orbit_nodes:
-            node.update_position(current_timestamp)
+        sat_objs = list(self.satellites.values()) # 打包所有卫星值，无索引
+        sat_coords = [] # 
+        sat_ids = [] # 
+
+        for sat in sat_objs:
+            sat.update_position(current_timestamp)
+            sat_coords.append(sat.position) # 收集卫星坐标 [x, y, z]
+            sat_ids.append(sat.id)          # 收集ID
+
+        sat_coords_np = np.array(sat_coords) # 转为 numpy 数组，(N, 3)
+
+        # 构建KD-Tree
+        tree = cKDTree(sat_coords_np)
+
+        # 查询最近邻，实现+Grid拓扑
+        # k=5 ：找最近的 5 个点，对应自己和最近的 4 个卫星
+        # query 返回两个矩阵：
+        # dists: 距离矩阵 (N, 5)，每个卫星与其它卫星最近的距离中，提取前5个
+        # idxs:  邻居在 sat_objs 列表里的下标 (N, 5)
+        dists, idxs = tree.query(sat_coords_np, k=5)
+
+        # 遍历每颗卫星的查询结果
+        for i in range(len(sat_objs)):
+            src_id = sat_ids[i]
             
-        # 2. 构建 ISL (暴力搜索最近邻居)
-        nodes_list = list(self.satellites.values())
-        for i, sat1 in enumerate(nodes_list):
-            dists = []
-            for j, sat2 in enumerate(nodes_list):
-                if i == j: continue
-                d = sat1.get_distance(sat2)
-                if d < 5000: 
-                    dists.append((d, sat2))
-            
-            dists.sort(key=lambda x: x[0])
-            for d, target in dists[:4]:
-                self.graph.add_edge(sat1.id, target.id, weight=d/SPEED_OF_LIGHT, type='ISL')
+            # 遍历它找到的 4 个邻居
+            # j 是邻居在 dists/idxs 这一行的列索引 (1到4)
+            for j in range(1, 5): 
+                neighbor_idx = idxs[i][j]
+                dist = dists[i][j]
+                
+                # 设置 5000km 为最大通信距离
+                if dist < 5000 and dist != float('inf'):
+                    neighbor_id = sat_ids[neighbor_idx]
+                    
+                    # 添加边，NetworkX 自动去重，边的权重为卫星之间的物理距离
+                    self.graph.add_edge(src_id, neighbor_id, weight=dist, type='ISL')
+
+        # 连接 SDC
+        if self.sdcs:
+            sdc_objs = list(self.sdcs.values())
+            for sdc in sdc_objs:
+                sdc.update_position(current_timestamp)
+                
+                # k=1：离 SDC 最近的 1 个卫星
+                d, idx = tree.query(sdc.position, k=1)
+                
+                # 设置 5000km 为最大通信距离
+                if d < 5000 and dist != float('inf'):
+                    target_sat_id = sat_ids[idx]
+                    self.graph.add_edge(sdc.id, target_sat_id, weight=d, type='ISL')
         
-        # 3. 连接 SDC
-        for sdc in self.sdcs.values():
-            min_d = float('inf')
-            nearest = None
-            for sat in self.satellites.values():
-                d = sdc.get_distance(sat)
-                if d < min_d:
-                    min_d = d
-                    nearest = sat
-            if nearest:
-                self.graph.add_edge(sdc.id, nearest.id, weight=min_d/SPEED_OF_LIGHT, type='ISL')
+        # 连接 GS
+        if self.ground_stations:
+            for gs in self.ground_stations.values():
+                # k=1：离 GS 最近的 1 个卫星
+                d, idx = tree.query(gs.position, k=1)
+                
+                # 设置 2500km 为地面站最大通信距离
+                if d < 2500 and dist != float('inf'): 
+                    target_sat_id = sat_ids[idx]
+                    self.graph.add_edge(gs.id, target_sat_id, weight=d, type='GSL')
 
-        # 4. 连接 GS (GSL)
-        for gs in self.ground_stations.values():
-            min_d = float('inf')
-            nearest = None
-            for sat in self.satellites.values():
-                d = gs.get_distance(sat)
-                if d < 2000 and d < min_d:
-                    min_d = d
-                    nearest = sat
-            
-            if nearest:
-                self.graph.add_edge(gs.id, nearest.id, weight=min_d/SPEED_OF_LIGHT, type='GSL')
-
-    def ospc_routing(self, source_id, target_id):
+    def ospc_routing(self, v_start, v_end):
         """OSPC路由"""
         # 边界检查
-        if source_id not in self.graph or target_id not in self.graph:
+        if v not in self.graph or v_end not in self.graph:
             return None
 
         # 所有节点距离赋值为无穷
         dist = {node: float('inf') for node in self.graph.nodes()}
         # 
         prev = {node: None for node in self.graph.nodes()}
-        dist[source_id] = 0.0
+        dist[v_start] = 0.0
 
-        Q = [(0.0, source_id)] # 创建优先列表
+        Q = [(0.0, v_start)] # 创建优先列表
 
         while Q:
             # 弹出堆中延迟最小的节点
@@ -438,7 +456,7 @@ class MegaConstellation:
                 continue
 
             # 终点
-            if u == target_id:
+            if u == v_end:
                 break
 
             for v in self.graph.neighbors(u):
@@ -453,9 +471,9 @@ class MegaConstellation:
                     heapq.heappush(Q, (alt, v))
 
         path = []
-        curr = target_id
+        curr = v_end
         
-        if prev[curr] is None and curr != source_id:
+        if prev[curr] is None and curr != v_start:
             return None # 无法到达
 
         while curr is not None:
@@ -467,29 +485,17 @@ class MegaConstellation:
         return path
     
         # try:
-        #     return nx.shortest_path(self.graph, source_id, target_id, weight='weight')
+        #     return nx.shortest_path(self.graph, v_start, v_end, weight='weight')
         # except:
         #     return None
         
     def calculate_path_latency(self, user_position, path_node_ids, propagation_factor=1.0):
         """
-        计算一条完整路径的累积传播延迟。
-        
-        Args:
-            user_position (np.array): 用户的物理坐标 [x, y, z]，单位 km。
-                                      如果路径是从地面站开始，这里可以传 None。
-            path_node_ids (list): 路径上经过的节点 ID 列表。
-                                  例如: ['GS_1', 'Sat_10', 'Sat_11', 'SDC_2']
-            propagation_factor (float): 介质系数。
-                                        1.0 = 真空光速 (无线电/激光)
-                                        1.5 = 光纤 (地面站之间如果走光纤，速度约为 2/3 c)
-        
-        Returns:
-            float: 总延迟 (秒)
+        计算一条完整路径的累积延迟
         """
         total_distance = 0.0
         
-        # 1. 处理 [用户] -> [路径第一个节点] 的这一跳
+        # 用户 -> 路径第一个节点 
         # 如果提供了用户坐标，说明第一跳是 "User -> Access Node"
         if user_position is not None and len(path_node_ids) > 0:
             first_node_id = path_node_ids[0]
