@@ -180,47 +180,6 @@ class GroundDataCenter(Node):
         self.position[1] = EARTH_RADIUS * math.cos(rad_lat) * math.sin(rad_lon)
         self.position[2] = EARTH_RADIUS * math.sin(rad_lat)
 
-    def __init__(self, node_a, node_b, link_type):
-        self.node_a = node_a
-        self.node_b = node_b
-        self.type = link_type
-        
-        if self.type == 'ISL':
-            # 星间链路: 10 Gbps ~ 1250 MB/s
-            self.bandwidth = 1250.0 
-            self.trans_cost_factor = COST_PARAMS['theta']
-            
-        elif self.type == 'IGL': 
-            # 地面光纤: 20 Gbps ~ 2500 MB/s
-            self.bandwidth = 2500.0 
-            self.trans_cost_factor = COST_PARAMS['xi']
-            
-        else: # GSL
-            # 星地链路: 500 Mbps ~ 62.5 MB/s (瓶颈)
-            self.bandwidth = 62.5  
-            self.trans_cost_factor = COST_PARAMS['eta']
-
-        if self.type == 'ISL' or self.type == 'GSL':
-            self.prop_speed = SPEED_OF_LIGHT
-            self.dist_factor = 1.0 
-        else: # 地面之间
-            self.prop_speed = SPEED_OF_FIBER
-            self.dist_factor = 1.5   # 实际铺设长度通常是直线距离的 1.5 倍
-
-    def get_latency(self, content_size):
-        # 传输延迟 (内容大小 / 带宽)
-        if content_size <= 0:
-            trans_delay = 0
-        else:
-            trans_delay = content_size / self.bandwidth
-        
-        # 传播延迟 (物理距离 / 光速)
-        straight_dist = self.node_a.get_distance(self.node_b)
-        actual_dist = straight_dist * self.dist_factor 
-        prop_delay = actual_dist / self.prop_speed
-
-        return trans_delay + prop_delay
-
 class MegaConstellation:
     def __init__(self):
         self.graph = nx.Graph()
@@ -407,7 +366,7 @@ class MegaConstellation:
                 dist = dists[i][j]
                 
                 # 设置 5000km 为最大通信距离
-                if dist < 5000 and dist != float('inf'):
+                if dist < 5000:
                     neighbor_id = sat_ids[neighbor_idx]
                     
                     # 添加边，NetworkX 自动去重，边的权重为卫星之间的物理距离
@@ -420,23 +379,23 @@ class MegaConstellation:
                 sdc.update_position(current_timestamp)
                 
                 # k=1：离 SDC 最近的 1 个卫星
-                d, idx = tree.query(sdc.position, k=1)
+                dist, idx = tree.query(sdc.position, k=1)
                 
                 # 设置 5000km 为最大通信距离
-                if d < 5000 and dist != float('inf'):
+                if dist < 5000:
                     target_sat_id = sat_ids[idx]
-                    self.graph.add_edge(sdc.id, target_sat_id, weight=d, type='ISL')
+                    self.graph.add_edge(sdc.id, target_sat_id, weight=dist, type='ISL')
         
         # 连接 GS
         if self.ground_stations:
             for gs in self.ground_stations.values():
                 # k=1：离 GS 最近的 1 个卫星
-                d, idx = tree.query(gs.position, k=1)
+                dist, idx = tree.query(gs.position, k=1)
                 
                 # 设置 2500km 为地面站最大通信距离
-                if d < 2500 and dist != float('inf'): 
+                if dist < 2500: 
                     target_sat_id = sat_ids[idx]
-                    self.graph.add_edge(gs.id, target_sat_id, weight=d, type='GSL')
+                    self.graph.add_edge(gs.id, target_sat_id, weight=dist, type='GSL')
 
     def get_link_delay(self, u, v, content_size):
         """
