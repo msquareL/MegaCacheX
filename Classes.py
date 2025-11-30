@@ -7,6 +7,7 @@ import numpy as np
 import networkx as nx
 from datetime import datetime, timedelta
 from sgp4.api import Satrec, jday
+from collections import OrderedDict
 
 # 物理常数
 SPEED_OF_LIGHT = 299792.458  # km/s (c)
@@ -14,9 +15,11 @@ SPEED_OF_FIBER = SPEED_OF_LIGHT * 0.667  # 光纤光速 (km/s)
 EARTH_RADIUS = 6371.0        # km
 
 # 链路带宽配置 (单位: MB/s)
-BANDWIDTH_ISL = 1250.0  # 星间链路 (10 Gbps)
-BANDWIDTH_GSL = 62.5    # 星地链路 (500 Mbps)
-BANDWIDTH_IGL = 2500.0  # 地面光纤 (20 Gbps)
+BANDWIDTH_ISL = 1250.0   # 星间链路 (10 Gbps)
+BANDWIDTH_GSL = 62.5     # 星地链路 (500 Mbps)
+BANDWIDTH_U = 12.5       # 用户链路 (100Mbps)
+BANDWIDTH_IGL = 2500.0   # 地面光纤 (20 Gbps)
+
 
 # 参考论文 Table I 的成本参数 (归一化 0.0 - 1.0)
 COST_PARAMS = {
@@ -64,7 +67,7 @@ class Node:
         self.capacity = capacity # 存储容量
         self.used_storage = 0.0 # 已使用的存储空间
         self.position = np.array([0., 0., 0.])
-        self.cached_contents = set() # 缓存内容集合，具有去重功能
+        self.cached_contents = OrderedDict()
 
     def get_distance(self, other):
         return np.linalg.norm(self.position - other.position)
@@ -75,11 +78,32 @@ class Node:
         # 根据大小判断内容能否被缓存
     
     def cache_content(self, content):
-        if self.has_space(content.size):
-            self.cached_contents.add(content) # 缓存整个 content 类
-            self.used_storage += content.size
-            return True # 进行缓存
-        return False
+        # Case 1: 内容已经在缓存里了 -> 命中 (Hit)
+        if content in self.cached_contents:
+            # 【关键】将其移动到字典末尾，标记为"最近刚刚使用过"
+            self.cached_contents.move_to_end(content)
+            return True
+
+        # Case 2: 内容不在缓存里 -> 需要腾空间 (Eviction)
+        # 只要剩余空间不足，就循环删除最老的数据
+        while not self.has_space(content.size):
+            # 如果缓存已经空了，还是装不下（说明这个文件比卫星总容量还大）
+            if not self.cached_contents:
+                return False
+            
+            # 【关键】popitem(last=False) 弹出字典最开头的元素（最久未使用的）
+            # last=False 类似于队列的 popleft
+            removed_content, _ = self.cached_contents.popitem(last=False)
+            self.used_storage -= removed_content.size
+            
+            # (可选) 打印淘汰日志
+            # print(f"      [LRU Evict] {self.id} 淘汰了 {removed_content.id} (腾出 {removed_content.size:.1f}MB)")
+
+        # Case 3: 存入新内容
+        # 把它放到字典末尾（最新的）
+        self.cached_contents[content] = None 
+        self.used_storage += content.size
+        return True
 
 class User(Node):
     def __init__(self, user_id, lat, lon):
@@ -410,6 +434,9 @@ class MegaConstellation:
             prop_speed = SPEED_OF_LIGHT
         elif link_type == 'GSL':
             bandwidth = BANDWIDTH_GSL
+            prop_speed = SPEED_OF_LIGHT
+        elif link_type == 'UserLink':
+            bandwidth = BANDWIDTH_U
             prop_speed = SPEED_OF_LIGHT
         else: # IGL
             bandwidth = BANDWIDTH_IGL
