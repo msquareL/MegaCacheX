@@ -180,7 +180,6 @@ class GroundDataCenter(Node):
         self.position[1] = EARTH_RADIUS * math.cos(rad_lat) * math.sin(rad_lon)
         self.position[2] = EARTH_RADIUS * math.sin(rad_lat)
 
-class Link:
     def __init__(self, node_a, node_b, link_type):
         self.node_a = node_a
         self.node_b = node_b
