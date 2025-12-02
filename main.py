@@ -43,21 +43,19 @@ def get_trace_start_time(filename):
 
 def MLC3(mc, requests, current_time, stats):
     """
-    处理当前时间步的所有请求。
-    流程：生成随机用户 -> 寻找接入卫星 -> 动态挂载用户到图 -> 路由(多源站) -> 缓存决策 -> 移除用户
+    处理当前时间步的所有请求
+    流程：生成随机用户 -> 寻找接入卫星 -> 路由(最近副本策略) -> 缓存决策
     """
     for req in requests:
         content = req['content']
         # 更新内容热度
         content.update_popularity(1)
         
-        # 生成随机用户并接入
+        # 生成随机用户
         rand_lat = random.uniform(-90, 90)
         rand_lon = random.uniform(-180, 180)
-        # rand_lat = 39.9
-        # rand_lon = 116.4
-        user_id = f"User_Temp_{time.time()}_{random.randint(1000,9999)}" # 确保ID唯一
-        user = User(user_id, rand_lat, rand_lon)
+        # 创建临时 User 对象
+        temp_user = User("TempUser", rand_lat, rand_lon)
         
         # 寻找最近接入卫星
         min_dist = float('inf')
@@ -65,7 +63,7 @@ def MLC3(mc, requests, current_time, stats):
         
         # 遍历所有卫星寻找最近的
         for sat in mc.satellites.values():
-            d = user.get_distance(sat)
+            d = temp_user.get_distance(sat)
             # 1500km 视距限制
             if d < 1500 and d < min_dist:
                 min_dist = d
@@ -75,34 +73,46 @@ def MLC3(mc, requests, current_time, stats):
             # print(f"    [无信号] 用户({rand_lat:.1f}, {rand_lon:.1f}) 无卫星覆盖")
             continue
 
-        # 动态修改拓扑 (挂载用户)
-        mc.graph.add_node(user.id, type='user')
-        # 添加 UserLink，权重为物理距离
-        mc.graph.add_edge(user.id, access_sat.id, weight=min_dist, type='UserLink') 
+        # 用户接入卫星作为路由起点
+        routing_start_node_id = access_sat.id
 
-        # 源站路由计算 (Tier-1 SDC)
+        # 计算第一跳物理延迟 (User -> Access Sat)
+        first_hop_latency = min_dist / 299792.458 + content.size / 12.5
+
+        # 寻找最近的内容副本
         best_path = None
         min_path_latency = float('inf')
-        target_source_id = None
 
-        # 遍历所有 SDC，寻找延迟最低的源站路径
-        all_sources = list(mc.sdcs.keys())
-        
-        for potential_source in all_sources:
-            # 路由起点：User
-            temp_path = mc.ospc_routing(user.id, potential_source, content.size)
-            
-            if temp_path:
-                # 计算全路径延迟
+        # 候选目标：所有 SDC + 所有缓存了该内容的卫星
+        candidates = list(mc.sdcs.keys())
+        for sat_id, sat_node in mc.satellites.items():
+            if content in sat_node.cached_contents:
+                candidates.append(sat_id)
+
+        # 遍历候选者，找最快路径
+        for target_id in candidates:
+            # 接入卫星本身有缓存
+            if target_id == routing_start_node_id:
+                temp_path = [routing_start_node_id]
                 path_latency = 0.0
-                for i in range(len(temp_path)-1):
-                    # 调用类内部的计算函数
-                    path_latency += mc.get_link_delay(temp_path[i], temp_path[i+1], content.size)
+            else:
+                # 计算从 AccessSat 到 Target 的路径
+                temp_path = mc.ospc_routing(routing_start_node_id, target_id, content.size)
                 
-                if path_latency < min_path_latency:
-                    min_path_latency = path_latency
-                    best_path = temp_path
-                    target_source_id = potential_source
+                if temp_path:
+                    # 计算路径延迟
+                    path_latency = 0.0
+                    for i in range(len(temp_path)-1):
+                        path_latency += mc.get_link_delay(temp_path[i], temp_path[i+1], content.size)
+                else:
+                    continue # 不可达
+        
+            # 计算全路径延迟
+            total_latency_check = first_hop_latency + path_latency
+
+            if total_latency_check < min_path_latency:
+                min_path_latency = total_latency_check
+                best_path = temp_path
 
         # 缓存决策 (MLC3)
         if best_path:
@@ -112,33 +122,34 @@ def MLC3(mc, requests, current_time, stats):
             # 地面基准延迟，固定值
             latency_gs = 0.200 
 
+            # 命中接入卫星
+            if len(best_path) == 1:
+                stats['total_hits'] += 1
+                continue
+            
+            # 未命中接入卫星
             best_candidate_node = None
             max_score = -1.0
 
-            # 遍历路径上的中间卫星 (跳过 User 和 最终源站)
-            for node_id in best_path[1:-1]:
+            # 遍历路径上的中间卫星 (跳过源站或已有缓存者)
+            for node_id in best_path[:-1]:
                 if node_id in mc.satellites:
                     sat_node = mc.satellites[node_id]
                     
-                    # 如果已缓存，跳过
+                    # 双重检查
                     if content in sat_node.cached_contents:
-                        best_candidate_node = None # 命中
-                        stats['total_hits'] += 1
-                        break
-                    
-                    # 计算分数 & 决策
+                        continue
+
+                    # 计算分数
                     score = sat_node.satellite_score(content, latency_sat, latency_gs)
                     
                     if score > max_score:
                         max_score = score
                         best_candidate_node = sat_node
 
-            if best_candidate_node:
+            if best_candidate_node and max_score > 1.0:
                 if best_candidate_node.cache_content(content):
-                    print(f"      [Cache] {user.id} -> 选中最佳节点 {best_candidate_node.id} 缓存 {content.id} (Score:{max_score:.2f})")
-        # 移除用户节点，防止内存泄漏和图膨胀
-        if user.id in mc.graph:
-            mc.graph.remove_node(user.id)
+                    print(f"      [Cache] {temp_user.id} -> 选中最佳节点 {best_candidate_node.id} 缓存 {content.id} (Score:{max_score:.2f})")
 
 def run_simulation():
     # 初始化环境
@@ -204,7 +215,7 @@ def run_simulation():
         current_time += time_step
 
     print("仿真结束")
-    print(f"仿真结束。最终总命中次数: {global_stats['total_hits']}")
+    print(f"最终总命中次数: {global_stats['total_hits']}")
 
 if __name__ == "__main__":
     run_simulation()

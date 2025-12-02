@@ -350,8 +350,8 @@ class MegaConstellation:
         self.graph.clear_edges()
         
         sat_objs = list(self.satellites.values()) # 打包所有卫星值，无索引
-        sat_coords = [] # 
-        sat_ids = [] # 
+        sat_coords = [] # 收集所有卫星的三维坐标 [x, y, z]
+        sat_ids = [] # 收集与坐标一一对应的卫星 ID (作为索引映射表)
 
         for sat in sat_objs:
             sat.update_position(current_timestamp)
