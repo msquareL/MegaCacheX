@@ -53,7 +53,7 @@ class Content:
         self.history_popularity.append(self.popularity) # 存入历史记录
 
     def __hash__(self):
-        return hash(self.id) # 使用 id 计算哈希值，从而 set 可通过 id 去重
+        return hash(self.id) # 使用 id 计算哈希值
     
     def __eq__(self, other):
         if isinstance(other, Content):
@@ -134,10 +134,7 @@ class Satellite(Node):
 
         x_teme, y_teme, z_teme = r
         
-        # 3. 坐标转换: TEME -> ECEF
-        # 为了计算与地面站(地固系)的距离，必须考虑地球自转角度 (GMST)
-        # 简易计算格林尼治恒星时 (GMST) 角度 (弧度)
-        # 公式参考: AA (Astronomical Algorithms) 简化版
+        # 坐标转换: TEME -> ECEF
         d = (jd - 2451545.0) + fr
         gmst_hours = 18.697374558 + 24.06570982441908 * d
         gmst_rad = (gmst_hours % 24) * 15 * (math.pi / 180) # 将时间转换为弧度

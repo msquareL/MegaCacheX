@@ -44,11 +44,8 @@ def fetch_and_convert_globalping():
         # 转换为 DataFrame
         df = pd.DataFrame(gdc_list)
         
-        # 去重：Globalping 在同一个城市可能有多个探针，仿真中为了避免重叠，
-        # 可以选择保留所有，或者按坐标去重。这里我们简单保留所有。
-        
         # 保存文件名
-        output_file = "MegaCacheX_GDC_Nodes.csv"
+        output_file = "GDC_Globalping_Nodes.csv"
         
         # 保存 CSV
         df.to_csv(output_file, index=False, encoding='utf-8')

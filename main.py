@@ -80,7 +80,7 @@ def MLC3(mc, requests, current_time, stats):
         # 添加 UserLink，权重为物理距离
         mc.graph.add_edge(user.id, access_sat.id, weight=min_dist, type='UserLink') 
 
-        # 多源站路由计算 (Tier-1 SDC Selection)
+        # 源站路由计算 (Tier-1 SDC)
         best_path = None
         min_path_latency = float('inf')
         target_source_id = None
@@ -104,12 +104,12 @@ def MLC3(mc, requests, current_time, stats):
                     best_path = temp_path
                     target_source_id = potential_source
 
-        # 缓存决策 (MLC3 Policy)
+        # 缓存决策 (MLC3)
         if best_path:
-            # min_path_latency 已经是包含了 User->Sat->...->SDC 的全链路延迟
+            # min_path_latency 是包含了 User->Sat->...->SDC 的全链路延迟
             latency_sat = min_path_latency
             
-            # 地面基准延迟 (可优化为计算值，这里暂用固定值)
+            # 地面基准延迟，固定值
             latency_gs = 0.200 
 
             best_candidate_node = None
