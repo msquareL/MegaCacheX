@@ -78,29 +78,23 @@ class Node:
         # 根据大小判断内容能否被缓存
     
     def cache_content(self, content):
-        # Case 1: 内容已经在缓存里了 -> 命中 (Hit)
+        # 命中
         if content in self.cached_contents:
-            # 【关键】将其移动到字典末尾，标记为"最近刚刚使用过"
+            # 移动到字典末尾，标记为"最近刚刚使用过"
             self.cached_contents.move_to_end(content)
             return True
 
-        # Case 2: 内容不在缓存里 -> 需要腾空间 (Eviction)
-        # 只要剩余空间不足，就循环删除最老的数据
+        # 未命中，容量不够，删除最老的数据
         while not self.has_space(content.size):
-            # 如果缓存已经空了，还是装不下（说明这个文件比卫星总容量还大）
+            # 文件大于卫星总容量
             if not self.cached_contents:
                 return False
             
-            # 【关键】popitem(last=False) 弹出字典最开头的元素（最久未使用的）
-            # last=False 类似于队列的 popleft
+            # 弹出字典最开头的元素（最久未使用的）
             removed_content, _ = self.cached_contents.popitem(last=False)
             self.used_storage -= removed_content.size
             
-            # (可选) 打印淘汰日志
-            # print(f"      [LRU Evict] {self.id} 淘汰了 {removed_content.id} (腾出 {removed_content.size:.1f}MB)")
-
-        # Case 3: 存入新内容
-        # 把它放到字典末尾（最新的）
+        # 存入新内容，放在字典末尾
         self.cached_contents[content] = None 
         self.used_storage += content.size
         return True
