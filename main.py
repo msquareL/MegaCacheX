@@ -2,15 +2,51 @@ import os
 import sys
 import time
 import csv 
+import itertools
 import random
+import numpy as np
+import matplotlib.pyplot as plt
 from datetime import datetime
-from Classes import MegaConstellation, User, COST_PARAMS
+from Classes import MegaConstellation, User
 
 # 文件路径
 TLE_SAT_FILE = "configuration/S_constellation.tle"
 TLE_SDC_FILE = "configuration/SDC_constellation.tle"
 GS_CSV_FILE  = "configuration/GS_Starlink_Nodes.csv"
+USER_NODES_FILE = "configuration/User_Nodes.csv"
 TRACE_FILE   = "StarFront_CDN_Trace_Dataset.csv"
+
+def load_user_coordinates(filename):
+    """
+    加载用户坐标文件，返回 [(lat, lon), ...] 列表
+    """
+    coords = []
+    if not os.path.exists(filename):
+        print(f"Error: 找不到用户文件 {filename}")
+        sys.exit(1)
+        
+    with open(filename, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        try:
+            next(reader) # 跳过表头 (name, latitude, longitude)
+        except StopIteration:
+            pass
+            
+        for row in reader:
+            if len(row) < 3: continue
+            try:
+                lat = float(row[1])
+                lon = float(row[2])
+                coords.append((lat, lon))
+            except ValueError:
+                continue
+    
+    if not coords:
+        print("Error: 用户坐标文件是空的或格式错误！")
+        sys.exit(1)
+        
+    print(f"成功加载 {len(coords)} 个固定用户坐标。")
+    return coords
 
 def get_trace_start_time(filename):
     """
@@ -41,21 +77,25 @@ def get_trace_start_time(filename):
         print(f"\n读取文件时发生未知异常: {e}")
         sys.exit(1)
 
-def MLC3(mc, requests, current_time, stats):
+def process(mc, requests, current_time, stats, user_coord_iterator):
     """
     处理当前时间步的所有请求
     流程：生成随机用户 -> 寻找接入卫星 -> 路由(最近副本策略) -> 缓存决策
     """
+    potential_actions = []
+
+    step_latencies = []
+
+    aggregation_map = {} # 聚合字典，用于累加延迟数据
+
     for req in requests:
         content = req['content']
         # 更新内容热度
         content.update_popularity(1)
         
-        # 生成随机用户
-        rand_lat = random.uniform(-90, 90)
-        rand_lon = random.uniform(-180, 180)
+        lat, lon = next(user_coord_iterator)
         # 创建临时 User 对象
-        temp_user = User("TempUser", rand_lat, rand_lon)
+        temp_user = User(f"User_{lat:.2f}_{lon:.2f}", lat, lon)
         
         # 寻找最近接入卫星
         min_dist = float('inf')
@@ -70,14 +110,13 @@ def MLC3(mc, requests, current_time, stats):
                 access_sat = sat
         
         if not access_sat:
-            # print(f"    [无信号] 用户({rand_lat:.1f}, {rand_lon:.1f}) 无卫星覆盖")
             continue
 
         # 用户接入卫星作为路由起点
         routing_start_node_id = access_sat.id
 
-        # 计算第一跳物理延迟 (User -> Access Sat)
-        first_hop_latency = min_dist / 299792.458 + content.size / 12.5
+        # 计算第一跳延迟 (User -> Access Sat)
+        first_hop_latency = min_dist / 299792.458 #+ content.size / 12.5
 
         # 寻找最近的内容副本
         best_path = None
@@ -96,7 +135,7 @@ def MLC3(mc, requests, current_time, stats):
                 temp_path = [routing_start_node_id]
                 path_latency = 0.0
             else:
-                # 计算从 AccessSat 到 Target 的路径
+                # 计算从接入卫星到目标的路径
                 temp_path = mc.ospc_routing(routing_start_node_id, target_id, content.size)
                 
                 if temp_path:
@@ -114,42 +153,99 @@ def MLC3(mc, requests, current_time, stats):
                 min_path_latency = total_latency_check
                 best_path = temp_path
 
+        final_request_latency = 0.0
+
         # 缓存决策 (MLC3)
         if best_path:
             # min_path_latency 是包含了 User->Sat->...->SDC 的全链路延迟
             latency_sat = min_path_latency
             
-            # 地面基准延迟，固定值
-            latency_gs = 0.200 
+            latency_gs = 0.200
 
-            # 命中接入卫星
+            final_request_latency = 0.0
+
             if len(best_path) == 1:
+                # 接入卫星直接命中
                 stats['total_hits'] += 1
-                continue
-            
-            # 未命中接入卫星
-            best_candidate_node = None
-            max_score = -1.0
+                final_request_latency = first_hop_latency
+                step_latencies.append(final_request_latency)
 
-            # 遍历路径上的中间卫星 (跳过源站或已有缓存者)
-            for node_id in best_path[:-1]:
+                continue 
+            else:
+                # 没命中接入卫星
+                final_request_latency = min_path_latency
+                step_latencies.append(final_request_latency)
+
+            # best_candidate_node = None
+            # max_score = -1.0
+
+            current_accumulated_latency = first_hop_latency
+            
+            # 遍历路径上的中间卫星
+            for i, node_id in enumerate(best_path[:-1]):
                 if node_id in mc.satellites:
                     sat_node = mc.satellites[node_id]
-                    
-                    # 双重检查
+
                     if content in sat_node.cached_contents:
                         continue
 
-                    # 计算分数
-                    score = sat_node.satellite_score(content, latency_sat, latency_gs)
-                    
-                    if score > max_score:
-                        max_score = score
-                        best_candidate_node = sat_node
+                    # 动态累加延迟
+                    if i > 0:
+                        prev_node_id = best_path[i-1]
+                        link_delay = mc.get_link_delay(prev_node_id, node_id, content.size)
+                        current_accumulated_latency += link_delay
 
-            if best_candidate_node and max_score > 1.0:
-                if best_candidate_node.cache_content(content):
-                    print(f"      [Cache] {temp_user.id} -> 选中最佳节点 {best_candidate_node.id} 缓存 {content.id} (Score:{max_score:.2f})")
+                    # 聚合逻辑，将延迟累加到 aggregation_map 中
+                    key = (node_id, content.id)
+                    if key not in aggregation_map:
+                        aggregation_map[key] = {
+                            'node': sat_node,
+                            'content': content,
+                            'sum_latency_sat': 0.0,
+                            'sum_latency_gs': 0.0,
+                            'req_count': 0
+                        }
+
+                    # 累加操作
+                    aggregation_map[key]['sum_latency_sat'] += current_accumulated_latency
+                    aggregation_map[key]['sum_latency_gs'] += latency_sat
+                    aggregation_map[key]['req_count'] += 1
+
+    # 遍历聚合数据，计算分数并生成候选动作
+    for key, data in aggregation_map.items():
+        node = data['node']
+        content = data['content']
+        sum_lat_sat = data['sum_latency_sat']
+        sum_lat_gs = data['sum_latency_gs']
+        
+        score = node.satellite_score(content, sum_lat_gs, sum_lat_sat)
+        
+        if score > 0.01:
+            potential_actions.append({
+                'score': score,
+                'node': node,
+                'content': content,
+                'user_id': f"Aggregated({data['req_count']})" # 调整日志显示
+            })
+
+    # 按分数排序，优先缓存高分内容
+    potential_actions.sort(key=lambda x: x['score'], reverse=True)
+
+    count_cached = 0
+    for action in potential_actions:
+        node = action['node']
+        content = action['content']
+        score = action['score']
+        user_id = action['user_id']
+        
+        if content in node.cached_contents:
+            continue 
+
+        if node.cache_content(content):
+            count_cached += 1
+            print(f"      [Cache] {user_id} -> {node.id} 存入 {content.id} (Score:{score:.2f})")
+
+    return step_latencies
 
 def run_simulation():
     # 初始化环境
@@ -178,6 +274,9 @@ def run_simulation():
     else:
         print(f"错误: 找不到文件 {GS_CSV_FILE}")
         return
+    
+    user_coords_list = load_user_coordinates(USER_NODES_FILE)
+    user_coord_iter = itertools.cycle(user_coords_list)
 
     # 获取 CSV 文件中的开始时间
     start_timestamp = get_trace_start_time(TRACE_FILE)
@@ -190,13 +289,18 @@ def run_simulation():
     end_time = start_timestamp + simulation_duration
 
     if len(mc.sdcs) > 0:
-        source_node_id = list(mc.sdcs.keys())[0] 
-        print(f"源站设定为: {source_node_id}")
+        print(f"成功加载 {len(mc.sdcs)} 个源站 (SDC)。")
     else:
         print("错误: 没有加载到 SDC，无法运行。")
         return
 
     global_stats = {'total_hits': 0}
+
+    all_request_latencies = []
+
+    # 记录每个时间步的平均延迟，用于画趋势图
+    history_avg_latencies = []
+    history_timestamps = []
 
     while current_time < end_time:
         print(f"\n[Time: {current_time:.1f}] 正在更新拓扑...")
@@ -209,13 +313,175 @@ def run_simulation():
         requests = mc.load_trace_batch(TRACE_FILE, current_time, time_step)
         print(f"  - 本轮 Trace 请求数: {len(requests)}")
 
-        MLC3(mc, requests, current_time, global_stats)
+        current_step_latencies = process(mc, requests, current_time, global_stats, user_coord_iter)
+
+        if current_step_latencies:
+            all_request_latencies.extend(current_step_latencies)
+
+            # 计算本轮平均值并记录
+            avg_step_lat = sum(current_step_latencies) / len(current_step_latencies)
+            history_avg_latencies.append(avg_step_lat * 1000) # 转换为 ms
+            history_timestamps.append(current_time - start_timestamp)
+            print(f"  > 本轮平均延迟: {avg_step_lat * 1000:.2f} ms")
 
         # 时间步进
         current_time += time_step
 
     print("仿真结束")
     print(f"最终总命中次数: {global_stats['total_hits']}")
+
+    if all_request_latencies:
+        # 转换为毫秒
+        latencies_ms = [t * 1000 for t in all_request_latencies]
+        
+        # 平均延迟
+        avg_latency = sum(latencies_ms) / len(latencies_ms)
+        
+        # 最小/最大延迟
+        min_latency = min(latencies_ms)
+        max_latency = max(latencies_ms)
+        
+        # 百分位延迟
+        latencies_ms.sort()
+        p50_idx = int(len(latencies_ms) * 0.5)
+        p95_idx = int(len(latencies_ms) * 0.95)
+        p99_idx = int(len(latencies_ms) * 0.99)
+        
+        p50_latency = latencies_ms[p50_idx] # 中位数
+        p95_latency = latencies_ms[p95_idx] # 95% 的请求延迟都低于此值
+        p99_latency = latencies_ms[p99_idx] # 99% 的请求延迟都低于此值
+
+        print(f"统计请求总数: {len(latencies_ms)}")
+        print(f"平均延迟 (Avg): {avg_latency:.2f} ms")
+        print(f"中位数延迟 (P50): {p50_latency:.2f} ms")
+        print(f"95%延迟 (P95): {p95_latency:.2f} ms")
+        print(f"99%延迟 (P99): {p99_latency:.2f} ms")
+        print(f"最小延迟 (Min): {min_latency:.2f} ms")
+        print(f"最大延迟 (Max): {max_latency:.2f} ms")
+    else:
+        print("没有成功处理任何请求，无法计算延迟统计。")
+
+    # 引入字体管理器
+    import matplotlib.font_manager as fm
+    
+    # 设置风格
+    plt.style.use('seaborn-v0_8-whitegrid')
+
+    # 1. 定义 Mac 系统常见的中文自体文件路径列表 (按优先级)
+    mac_font_paths = [
+        '/System/Library/Fonts/STHeiti Light.ttc',         # 华文黑体-轻
+        r'C:\Windows\Fonts\simhei.ttf',    # SimHei (黑体) - 最推荐，几乎所有Windows都有
+        r'C:\Windows\Fonts\msyh.ttc',      # Microsoft YaHei (微软雅黑)
+        r'C:\Windows\Fonts\simsun.ttc',    # SimSun (宋体)
+        r'C:\Windows\Fonts\kaiu.ttf',      # KaiTi (楷体)
+        r'C:\Windows\Fonts\Deng.ttf',      # DengXian (等线)
+    ]
+    
+    # 遍历查找存在的字体文件
+    selected_font_path = None
+    for f_path in mac_font_paths:
+        if os.path.exists(f_path):
+            selected_font_path = f_path
+            break
+            
+    # 强制加载字体
+    if selected_font_path:
+        # 将字体文件加入 Matplotlib 管理器
+        fm.fontManager.addfont(selected_font_path)
+        # 获取该字体的内部名称
+        prop = fm.FontProperties(fname=selected_font_path)
+        custom_font_name = prop.get_name()
+        
+        # 设置全局默认字体
+        plt.rcParams['font.sans-serif'] = [custom_font_name] + plt.rcParams['font.sans-serif']
+        plt.rcParams['font.family'] = 'sans-serif'
+        plt.rcParams['axes.unicode_minus'] = False
+    else:
+        print("未找到任何系统中文字体文件")
+ 
+    # 端到端延迟 CDF (累积分布函数) 
+    # 展示有多少比例的请求延迟低于某个值 
+    if all_request_latencies:
+        plt.figure(figsize=(8, 6))
+        # 转换为毫秒
+        lat_data_ms = np.array(all_request_latencies) * 1000
+        # 排序
+        sorted_data = np.sort(lat_data_ms)
+        # 计算 y 轴 (0 ~ 1)
+        yvals = np.arange(len(sorted_data)) / float(len(sorted_data) - 1)
+        
+        plt.plot(sorted_data, yvals, linewidth=2, color='darkblue')
+        plt.xlabel('端到端延迟 (ms)', fontsize=12)
+        plt.ylabel('累积概率 (CDF)', fontsize=12)
+        plt.title('用户请求延迟累积分布图', fontsize=14)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        # 标出 P95 线
+        p95_val = sorted_data[int(len(sorted_data)*0.95)]
+        plt.axvline(p95_val, color='red', linestyle='--', alpha=0.5, label=f'P95: {p95_val:.1f}ms')
+        plt.legend()
+        plt.savefig('Result_Latency_CDF.png', dpi=300)
+        print("  - 已保存: Result_Latency_CDF.png")
+        plt.close()
+
+    # 平均延迟随时间变化趋势
+    # 展示网络性能的稳定性
+    if history_avg_latencies:
+        plt.figure(figsize=(10, 5))
+        plt.plot(history_timestamps, history_avg_latencies, marker='o', markersize=4, linestyle='-', color='teal')
+        plt.xlabel('仿真时间 (s)', fontsize=12)
+        plt.ylabel('平均延迟 (ms)', fontsize=12)
+        plt.title('网络平均延迟随时间变化趋势', fontsize=14)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.savefig('Result_Latency_Trend.png', dpi=300)
+        print("  - 已保存: Result_Latency_Trend.png")
+        plt.close()
+
+    # 星座拓扑快照
+    # 真实的 3D 轨道环境
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # 提取卫星坐标
+    xs, ys, zs = [], [], []
+    for sat in mc.satellites.values():
+        xs.append(sat.position[0])
+        ys.append(sat.position[1])
+        zs.append(sat.position[2])
+    
+    # 画卫星 (蓝色小点)
+    ax.scatter(xs, ys, zs, s=1, c='#0077BE', alpha=0.6, label='低轨卫星')
+    
+    # 提取源站坐标 (红色大点)
+    if mc.sdcs:
+        s_xs, s_ys, s_zs = [], [], []
+        for sdc in mc.sdcs.values():
+            s_xs.append(sdc.position[0])
+            s_ys.append(sdc.position[1])
+            s_zs.append(sdc.position[2])
+        ax.scatter(s_xs, s_ys, s_zs, s=50, c='red', marker='*', label='SDC 源站')
+
+    # 画简单的地球 (线框)
+    u, v = np.mgrid[0:2*np.pi:30j, 0:np.pi:15j]
+    earth_x = 6371 * np.cos(u) * np.sin(v)
+    earth_y = 6371 * np.sin(u) * np.sin(v)
+    earth_z = 6371 * np.cos(v)
+    ax.plot_wireframe(earth_x, earth_y, earth_z, color='gray', alpha=0.2, linewidth=0.5)
+
+    ax.set_title('3D星座拓扑结构', fontsize=15)
+    ax.set_xlabel('X (km)')
+    ax.set_ylabel('Y (km)')
+    ax.set_zlabel('Z (km)')
+    # 调整视角让地球看起来更立体
+    ax.view_init(elev=20, azim=45)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('Result_3D_Topology.png', dpi=300)
+    print("  - 已保存: Result_3D_Topology.png")
+    plt.close()
+    
+    # 显示一下
+    plt.show()
 
 if __name__ == "__main__":
     run_simulation()

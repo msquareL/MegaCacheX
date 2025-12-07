@@ -384,7 +384,7 @@ class MegaConstellation:
                 if dist < 5000:
                     neighbor_id = sat_ids[neighbor_idx]
                     
-                    # 添加边，NetworkX 自动去重，边的权重为卫星之间的物理距离
+                    # 添加边，边的权重为卫星之间的物理距离
                     self.graph.add_edge(src_id, neighbor_id, weight=dist, type='ISL')
 
         # 连接 SDC
@@ -442,7 +442,8 @@ class MegaConstellation:
         else:
             trans_delay = 0.0
             
-        return prop_delay + trans_delay
+        # return prop_delay + trans_delay
+        return prop_delay
 
     def ospc_routing(self, v_start, v_end, content_size):
         """OSPC路由"""
@@ -468,8 +469,10 @@ class MegaConstellation:
                 break
 
             for v in self.graph.neighbors(u):
-                
-                edge_delay = self.get_link_delay(u, v, content_size)
+
+                edge = self.graph[u][v]
+                # edge_delay = self.get_link_delay(u, v, content_size)
+                edge_delay = edge['weight'] / SPEED_OF_LIGHT
                 
                 alt = delay[u] + edge_delay
 
