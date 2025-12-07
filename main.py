@@ -282,7 +282,7 @@ def run_simulation():
     start_timestamp = get_trace_start_time(TRACE_FILE)
     print(f"仿真起始时间戳为: {start_timestamp}")
 
-    simulation_duration = 6000 # 仿真持续时间，单位秒
+    simulation_duration = 1209600 # 仿真持续时间，单位秒
     time_step = 60             # 步长
     
     current_time = start_timestamp
@@ -367,7 +367,7 @@ def run_simulation():
     # 设置风格
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # 1. 定义 Mac 系统常见的中文自体文件路径列表 (按优先级)
+    # 定义 Mac 系统常见的中文自体文件路径列表 (按优先级)
     mac_font_paths = [
         '/System/Library/Fonts/STHeiti Light.ttc',         # 华文黑体-轻
         r'C:\Windows\Fonts\simhei.ttf',    # SimHei (黑体) - 最推荐，几乎所有Windows都有
