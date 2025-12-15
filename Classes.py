@@ -149,7 +149,7 @@ class Satellite(Node):
         
         self.position = np.array([x_ecef, y_ecef, z_ecef])
 
-    def satellite_score(self, content, latency_sat, latency_gs):
+    def satellite_score(self, content, latency_remote, latency_local):
         current_total_pop = 0.0
         for cached_obj in self.cached_contents:
             current_total_pop += cached_obj.popularity
@@ -157,8 +157,8 @@ class Satellite(Node):
         term1 = content.popularity / current_total_pop if current_total_pop > 0 else 1.0
         # 该内容的流行度 / 该卫星上全部内容的流行度之和
 
-        term2 = latency_sat / latency_gs if latency_gs > 0 else 1.0
-        # 通过太空路径访问的延迟 / 通过地面站访问的延迟
+        term2 = latency_remote / latency_local if latency_local > 0 else 1.0
+        # 通过原卫星节点访问内容的延迟 / 通过该卫星访问内容的延迟
 
         term3 = content.size / self.capacity
         # 内容大小 / 卫星总容量

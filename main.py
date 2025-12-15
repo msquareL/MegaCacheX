@@ -198,24 +198,24 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
                         aggregation_map[key] = {
                             'node': sat_node,
                             'content': content,
-                            'sum_latency_sat': 0.0,
-                            'sum_latency_gs': 0.0,
+                            'sum_latency_local': 0.0,
+                            'sum_latency_remote': 0.0,
                             'req_count': 0
                         }
 
                     # 累加操作
-                    aggregation_map[key]['sum_latency_sat'] += current_accumulated_latency
-                    aggregation_map[key]['sum_latency_gs'] += latency_sat
+                    aggregation_map[key]['sum_latency_local'] += current_accumulated_latency
+                    aggregation_map[key]['sum_latency_remote'] += latency_sat
                     aggregation_map[key]['req_count'] += 1
 
     # 遍历聚合数据，计算分数并生成候选动作
     for key, data in aggregation_map.items():
         node = data['node']
         content = data['content']
-        sum_lat_sat = data['sum_latency_sat']
-        sum_lat_gs = data['sum_latency_gs']
+        sum_lat_remote = data['sum_latency_remote']
+        sum_lat_local = data['sum_latency_local']
         
-        score = node.satellite_score(content, sum_lat_gs, sum_lat_sat)
+        score = node.satellite_score(content, sum_lat_remote, sum_lat_local)
         
         if score > 0.01:
             potential_actions.append({
