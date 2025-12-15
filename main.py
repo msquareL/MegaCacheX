@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from Classes import MegaConstellation, User
 import Visualization
+from config import get_config
 
 # 文件路径
 TLE_SAT_FILE = "configuration/S_constellation.tle"
