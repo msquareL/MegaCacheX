@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 from Classes import MegaConstellation, User
+import Visualization
 
 # 文件路径
 TLE_SAT_FILE = "configuration/S_constellation.tle"
@@ -290,7 +291,7 @@ def run_simulation():
     start_timestamp = get_trace_start_time(TRACE_FILE)
     print(f"仿真起始时间戳为: {start_timestamp}")
 
-    simulation_duration = 1209600 # 仿真持续时间，单位秒
+    simulation_duration = 6000 # 仿真持续时间，单位秒
     time_step = 60             # 步长
     
     current_time = start_timestamp
@@ -338,114 +339,9 @@ def run_simulation():
     print("仿真结束")
     print(f"最终总命中次数: {global_stats['total_hits']}")
 
-    if all_request_latencies:
-        # 转换为毫秒
-        latencies_ms = [t * 1000 for t in all_request_latencies]
-        
-        # 平均延迟
-        avg_latency = sum(latencies_ms) / len(latencies_ms)
-        
-        # 最小/最大延迟
-        min_latency = min(latencies_ms)
-        max_latency = max(latencies_ms)
-        
-        # 百分位延迟
-        latencies_ms.sort()
-        p50_idx = int(len(latencies_ms) * 0.5)
-        p95_idx = int(len(latencies_ms) * 0.95)
-        p99_idx = int(len(latencies_ms) * 0.99)
-        
-        p50_latency = latencies_ms[p50_idx] # 中位数
-        p95_latency = latencies_ms[p95_idx] # 95% 的请求延迟都低于此值
-        p99_latency = latencies_ms[p99_idx] # 99% 的请求延迟都低于此值
-
-        print(f"统计请求总数: {len(latencies_ms)}")
-        print(f"平均延迟 (Avg): {avg_latency:.2f} ms")
-        print(f"中位数延迟 (P50): {p50_latency:.2f} ms")
-        print(f"95%延迟 (P95): {p95_latency:.2f} ms")
-        print(f"99%延迟 (P99): {p99_latency:.2f} ms")
-        print(f"最小延迟 (Min): {min_latency:.2f} ms")
-        print(f"最大延迟 (Max): {max_latency:.2f} ms")
-    else:
-        print("没有成功处理任何请求，无法计算延迟统计。")
-
-    # 引入字体管理器
-    import matplotlib.font_manager as fm
-    
-    # 设置风格
-    plt.style.use('seaborn-v0_8-whitegrid')
-
-    # 定义系统常见的中文自体文件路径列表 (按优先级)
-    mac_font_paths = [
-        '/System/Library/Fonts/STHeiti Light.ttc',         # 华文黑体-轻
-        r'C:\Windows\Fonts\simhei.ttf',    # SimHei (黑体) 
-        r'C:\Windows\Fonts\msyh.ttc',      # Microsoft YaHei (微软雅黑)
-        r'C:\Windows\Fonts\simsun.ttc',    # SimSun (宋体)
-        r'C:\Windows\Fonts\kaiu.ttf',      # KaiTi (楷体)
-        r'C:\Windows\Fonts\Deng.ttf',      # DengXian (等线)
-    ]
-    
-    # 遍历查找存在的字体文件
-    selected_font_path = None
-    for f_path in mac_font_paths:
-        if os.path.exists(f_path):
-            selected_font_path = f_path
-            break
-            
-    # 加载字体
-    if selected_font_path:
-        # 将字体文件加入 Matplotlib 管理器
-        fm.fontManager.addfont(selected_font_path)
-        # 获取该字体的内部名称
-        prop = fm.FontProperties(fname=selected_font_path)
-        custom_font_name = prop.get_name()
-        
-        # 设置全局默认字体
-        plt.rcParams['font.sans-serif'] = [custom_font_name] + plt.rcParams['font.sans-serif']
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['axes.unicode_minus'] = False
-    else:
-        print("未找到任何系统中文字体文件")
- 
-    # 端到端延迟 CDF (累积分布函数) 
-    # 展示有多少比例的请求延迟低于某个值 
-    if all_request_latencies:
-        plt.figure(figsize=(8, 6))
-        # 转换为毫秒
-        lat_data_ms = np.array(all_request_latencies) * 1000
-        # 排序
-        sorted_data = np.sort(lat_data_ms)
-        # 计算 y 轴 (0 ~ 1)
-        yvals = np.arange(len(sorted_data)) / float(len(sorted_data) - 1)
-        
-        plt.plot(sorted_data, yvals, linewidth=2, color='darkblue')
-        plt.xlabel('端到端延迟 (ms)', fontsize=12)
-        plt.ylabel('累积概率 (CDF)', fontsize=12)
-        plt.title('用户请求延迟累积分布图', fontsize=14)
-        plt.grid(True, linestyle='--', alpha=0.7)
-        
-        # 标出 P95 线
-        p95_val = sorted_data[int(len(sorted_data)*0.95)]
-        plt.axvline(p95_val, color='red', linestyle='--', alpha=0.5, label=f'P95: {p95_val:.1f}ms')
-        plt.legend()
-        plt.savefig('Result_Latency_CDF.png', dpi=300)
-        print("  - 已保存: Result_Latency_CDF.png")
-        plt.close()
-
-    # 平均延迟随时间变化趋势
-    if history_avg_latencies:
-        plt.figure(figsize=(10, 5))
-        plt.plot(history_timestamps, history_avg_latencies, marker='o', markersize=4, linestyle='-', color='teal')
-        plt.xlabel('仿真时间 (s)', fontsize=12)
-        plt.ylabel('平均延迟 (ms)', fontsize=12)
-        plt.title('网络平均延迟随时间变化趋势', fontsize=14)
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.savefig('Result_Latency_Trend.png', dpi=300)
-        print("  - 已保存: Result_Latency_Trend.png")
-        plt.close()
-
-    
-    plt.show()
+    # 可视化结果
+    viz = Visualization.ResultVisualizer()
+    viz.plot_latency_cdf(all_request_latencies) # 画延迟 CDF
 
 if __name__ == "__main__":
     run_simulation()
