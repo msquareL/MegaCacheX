@@ -80,7 +80,6 @@ def get_trace_start_time(filename):
 def process(mc, requests, current_time, stats, user_coord_iterator):
     """
     处理当前时间步的所有请求
-    流程：生成随机用户 -> 寻找接入卫星 -> 路由(最近副本策略) -> 缓存决策
     """
     potential_actions = []
 
@@ -153,8 +152,6 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
                 min_path_latency = total_latency_check
                 best_path = temp_path
 
-        final_request_latency = 0.0
-
         # 缓存决策 (MLC3)
         if best_path:
             # min_path_latency 是包含了 User->Sat->...->SDC 的全链路延迟
@@ -195,7 +192,7 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
                         link_delay = mc.get_link_delay(prev_node_id, node_id, content.size)
                         current_accumulated_latency += link_delay
 
-                    # 聚合逻辑，将延迟累加到 aggregation_map 中
+                    # 将延迟累加到 aggregation_map 中
                     key = (node_id, content.id)
                     if key not in aggregation_map:
                         aggregation_map[key] = {
@@ -225,11 +222,13 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
                 'score': score,
                 'node': node,
                 'content': content,
-                'user_id': f"Aggregated({data['req_count']})" # 调整日志显示
+                'user_id': f"Aggregated({data['req_count']})"
             })
 
     # 按分数排序，优先缓存高分内容
     potential_actions.sort(key=lambda x: x['score'], reverse=True)
+
+    sat_new_usage = {}
 
     count_cached = 0
     for action in potential_actions:
@@ -237,12 +236,21 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
         content = action['content']
         score = action['score']
         user_id = action['user_id']
+
+        # 初始化计数器
+        if node.id not in sat_new_usage:
+            sat_new_usage[node.id] = 0.0
         
         if content in node.cached_contents:
             continue 
+        
+        # 检查容量，容量不足则跳过
+        if sat_new_usage[node.id] + content.size > node.capacity:
+            continue
 
         if node.cache_content(content):
             count_cached += 1
+            sat_new_usage[node.id] += content.size
             print(f"      [Cache] {user_id} -> {node.id} 存入 {content.id} (Score:{score:.2f})")
 
     return step_latencies
@@ -367,10 +375,10 @@ def run_simulation():
     # 设置风格
     plt.style.use('seaborn-v0_8-whitegrid')
 
-    # 定义 Mac 系统常见的中文自体文件路径列表 (按优先级)
+    # 定义系统常见的中文自体文件路径列表 (按优先级)
     mac_font_paths = [
         '/System/Library/Fonts/STHeiti Light.ttc',         # 华文黑体-轻
-        r'C:\Windows\Fonts\simhei.ttf',    # SimHei (黑体) - 最推荐，几乎所有Windows都有
+        r'C:\Windows\Fonts\simhei.ttf',    # SimHei (黑体) 
         r'C:\Windows\Fonts\msyh.ttc',      # Microsoft YaHei (微软雅黑)
         r'C:\Windows\Fonts\simsun.ttc',    # SimSun (宋体)
         r'C:\Windows\Fonts\kaiu.ttf',      # KaiTi (楷体)
@@ -384,7 +392,7 @@ def run_simulation():
             selected_font_path = f_path
             break
             
-    # 强制加载字体
+    # 加载字体
     if selected_font_path:
         # 将字体文件加入 Matplotlib 管理器
         fm.fontManager.addfont(selected_font_path)
@@ -425,7 +433,6 @@ def run_simulation():
         plt.close()
 
     # 平均延迟随时间变化趋势
-    # 展示网络性能的稳定性
     if history_avg_latencies:
         plt.figure(figsize=(10, 5))
         plt.plot(history_timestamps, history_avg_latencies, marker='o', markersize=4, linestyle='-', color='teal')
@@ -437,50 +444,7 @@ def run_simulation():
         print("  - 已保存: Result_Latency_Trend.png")
         plt.close()
 
-    # 星座拓扑快照
-    # 真实的 3D 轨道环境
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
     
-    # 提取卫星坐标
-    xs, ys, zs = [], [], []
-    for sat in mc.satellites.values():
-        xs.append(sat.position[0])
-        ys.append(sat.position[1])
-        zs.append(sat.position[2])
-    
-    # 画卫星 (蓝色小点)
-    ax.scatter(xs, ys, zs, s=1, c='#0077BE', alpha=0.6, label='低轨卫星')
-    
-    # 提取源站坐标 (红色大点)
-    if mc.sdcs:
-        s_xs, s_ys, s_zs = [], [], []
-        for sdc in mc.sdcs.values():
-            s_xs.append(sdc.position[0])
-            s_ys.append(sdc.position[1])
-            s_zs.append(sdc.position[2])
-        ax.scatter(s_xs, s_ys, s_zs, s=50, c='red', marker='*', label='SDC 源站')
-
-    # 画简单的地球 (线框)
-    u, v = np.mgrid[0:2*np.pi:30j, 0:np.pi:15j]
-    earth_x = 6371 * np.cos(u) * np.sin(v)
-    earth_y = 6371 * np.sin(u) * np.sin(v)
-    earth_z = 6371 * np.cos(v)
-    ax.plot_wireframe(earth_x, earth_y, earth_z, color='gray', alpha=0.2, linewidth=0.5)
-
-    ax.set_title('3D星座拓扑结构', fontsize=15)
-    ax.set_xlabel('X (km)')
-    ax.set_ylabel('Y (km)')
-    ax.set_zlabel('Z (km)')
-    # 调整视角让地球看起来更立体
-    ax.view_init(elev=20, azim=45)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig('Result_3D_Topology.png', dpi=300)
-    print("  - 已保存: Result_3D_Topology.png")
-    plt.close()
-    
-    # 显示一下
     plt.show()
 
 if __name__ == "__main__":

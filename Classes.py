@@ -119,7 +119,6 @@ class Satellite(Node):
         """
         利用 SGP4 计算指定时间戳的位置
         并从 TEME (惯性系) 转换为 ECEF (地固系)
-        (TEME 是准惯性系, ECEF 随地球转)
         """
         dt = datetime.fromtimestamp(current_timestamp)
         # jday 函数把年月日时分秒转换成两个浮点数：jd(整日)和 fr(小数日)
@@ -365,7 +364,7 @@ class MegaConstellation:
 
         # 查询最近邻，实现+Grid拓扑
         # k=5 ：找最近的 5 个点，对应自己和最近的 4 个卫星
-        # query 返回两个矩阵：
+        # query 返回两个矩阵
         # dists: 距离矩阵 (N, 5)，每个卫星与其它卫星最近的距离中，提取前5个
         # idxs:  邻居在 sat_objs 列表里的下标 (N, 5)
         dists, idxs = tree.query(sat_coords_np, k=5)
@@ -453,7 +452,6 @@ class MegaConstellation:
 
         # 所有节点距离赋值为无穷
         delay = {node: float('inf') for node in self.graph.nodes()}
-        # 
         prev = {node: None for node in self.graph.nodes()}
         delay[v_start] = 0.0
 
