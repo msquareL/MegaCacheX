@@ -30,7 +30,7 @@ class ResultVisualizer:
             print(f"error: 找不到路径 {font_path}")
             self.my_font = fm.FontProperties() # 回退
 
-    def plot_latency_cdf(self, all_latencies, save_name='Result_Latency_CDF.png'):
+    def plot_latency_cdf(self, all_latencies, save_name):
         """
         端到端延迟的 CDF (累积分布)
         """
@@ -62,26 +62,6 @@ class ResultVisualizer:
         
         plt.legend(prop=self.my_font, fontsize=10, loc='lower right')
         plt.grid(True, linestyle='--', alpha=0.3)
-        
-        plt.savefig(save_name, dpi=300)
-        print(f"  - 已保存: {save_name}")
-        plt.close()
-
-    def plot_latency_trend(self, timestamps, avg_latencies, save_name='Result_Latency_Trend.png'):
-        """
-        图2: 画平均延迟随时间变化的趋势
-        """
-        if not avg_latencies:
-            print(f"[Visualization] 数据为空，跳过 {save_name}")
-            return
-
-        plt.figure(figsize=(10, 5))
-        plt.plot(timestamps, avg_latencies, marker='o', markersize=4, linestyle='-', color='teal')
-        
-        plt.xlabel('仿真时间 (秒)', fontproperties=self.my_font, fontsize=12)
-        plt.ylabel('平均延迟 (毫秒)', fontproperties=self.my_font, fontsize=12)
-        plt.title('网络性能随时间变化趋势', fontproperties=self.my_font, fontsize=14)
-        plt.grid(True, linestyle='--', alpha=0.7)
         
         plt.savefig(save_name, dpi=300)
         print(f"  - 已保存: {save_name}")
@@ -138,6 +118,5 @@ class ResultVisualizer:
         """
         print("\n[Visualization] 正在生成汇报图表...")
         self.plot_latency_cdf(all_latencies)
-        self.plot_latency_trend(timestamps, avg_latencies)
         self.plot_3d_topology(mc)
         print("[Visualization] 所有图表生成完毕。")

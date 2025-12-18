@@ -1,5 +1,4 @@
 from Classes import User
-import networkx as nx
 
 def mlc3(mc, requests, stats, user_coord_iterator):
     """

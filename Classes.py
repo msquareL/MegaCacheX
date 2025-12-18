@@ -5,7 +5,7 @@ import heapq
 from scipy.spatial import cKDTree
 import numpy as np
 import networkx as nx
-from datetime import datetime, timedelta
+from datetime import datetime
 from sgp4.api import Satrec, jday
 from collections import OrderedDict
 

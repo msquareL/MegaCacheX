@@ -64,7 +64,7 @@ def run_simulation():
 
     # 可视化结果
     viz = Visualization.ResultVisualizer()
-    viz.plot_latency_cdf(all_request_latencies) # 画延迟 CDF
+    viz.plot_latency_cdf(all_request_latencies, save_name=cfg['paths']['plot_save_cdf']) # 画延迟 CDF
 
 if __name__ == "__main__":
     run_simulation()
