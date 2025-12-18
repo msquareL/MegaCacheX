@@ -11,13 +11,6 @@ from Classes import MegaConstellation, User
 import Visualization
 from config import get_config
 
-# 文件路径
-TLE_SAT_FILE = "configuration/S_constellation.tle"
-TLE_SDC_FILE = "configuration/SDC_constellation.tle"
-GS_CSV_FILE  = "configuration/GS_Starlink_Nodes.csv"
-USER_NODES_FILE = "configuration/User_Nodes.csv"
-TRACE_FILE   = "StarFront_CDN_Trace_Dataset.csv"
-
 def load_user_coordinates(filename):
     """
     加载用户坐标文件，返回 [(lat, lon), ...] 列表
@@ -175,9 +168,6 @@ def process(mc, requests, current_time, stats, user_coord_iterator):
                 final_request_latency = min_path_latency
                 step_latencies.append(final_request_latency)
 
-            # best_candidate_node = None
-            # max_score = -1.0
-
             current_accumulated_latency = first_hop_latency
             
             # 遍历路径上的中间卫星
@@ -261,56 +251,31 @@ def run_simulation():
     # 初始化环境
     print("正在初始化 MegaCacheX 仿真环境")
     
-    mc = MegaConstellation()
+    cfg = get_config()
+    mc = MegaConstellation(
+        sat_file=cfg['paths']['tle_sat'], 
+        sdc_file=cfg['paths']['tle_sdc'],
+        gs_file=cfg['paths']['gs_nodes'],
+    )
     
-    # 加载节点文件
-    if os.path.exists(TLE_SAT_FILE):
-        mc.load_tle_file(TLE_SAT_FILE, "satellite")
-        print(f"已加载卫星: {len(mc.satellites)}")
-    else:
-        print(f"错误: 找不到文件 {TLE_SAT_FILE}")
-        return
-
-    if os.path.exists(TLE_SDC_FILE):
-        mc.load_tle_file(TLE_SDC_FILE, "sdc")
-        print(f"已加载 SDC: {len(mc.sdcs)}")
-    else:
-        print(f"错误: 找不到文件 {TLE_SDC_FILE}")
-        return
-
-    if os.path.exists(GS_CSV_FILE):
-        mc.load_gs_csv(GS_CSV_FILE)
-        print(f"已加载地面站: {len(mc.ground_stations)}")
-    else:
-        print(f"错误: 找不到文件 {GS_CSV_FILE}")
-        return
-    
-    user_coords_list = load_user_coordinates(USER_NODES_FILE)
+    user_coords_list = load_user_coordinates(cfg['paths']['user_nodes'])
     user_coord_iter = itertools.cycle(user_coords_list)
 
     # 获取 CSV 文件中的开始时间
-    start_timestamp = get_trace_start_time(TRACE_FILE)
+    start_timestamp = get_trace_start_time(cfg['paths']['trace_file'])
     print(f"仿真起始时间戳为: {start_timestamp}")
 
-    simulation_duration = 6000 # 仿真持续时间，单位秒
-    time_step = 60             # 步长
+    TRACE_FILE = cfg['paths']['trace_file']
+
+    simulation_duration = cfg['simulation']['duration'] # 仿真持续时间，单位秒
+    time_step = cfg['simulation']['step']             # 步长
     
     current_time = start_timestamp
     end_time = start_timestamp + simulation_duration
 
-    if len(mc.sdcs) > 0:
-        print(f"成功加载 {len(mc.sdcs)} 个源站 (SDC)。")
-    else:
-        print("错误: 没有加载到 SDC，无法运行。")
-        return
-
-    global_stats = {'total_hits': 0}
-
-    all_request_latencies = []
-
-    # 记录每个时间步的平均延迟，用于画趋势图
-    history_avg_latencies = []
-    history_timestamps = []
+    history_avg_latencies = [] # 每个时间步的平均延迟 (ms)
+    all_request_latencies = [] # 所有请求的延迟 (秒)
+    global_stats = {'total_hits': 0} # 全局统计命中次数
 
     while current_time < end_time:
         print(f"\n[Time: {current_time:.1f}] 正在更新拓扑...")
@@ -331,7 +296,6 @@ def run_simulation():
             # 计算本轮平均值并记录
             avg_step_lat = sum(current_step_latencies) / len(current_step_latencies)
             history_avg_latencies.append(avg_step_lat * 1000) # 转换为 ms
-            history_timestamps.append(current_time - start_timestamp)
             print(f"  > 本轮平均延迟: {avg_step_lat * 1000:.2f} ms")
 
         # 时间步进

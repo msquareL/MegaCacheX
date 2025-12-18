@@ -1,18 +1,26 @@
 import os
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+from config import get_config
 
 class ResultVisualizer:
     def __init__(self):
         """初始化可视化器"""
+        cfg = get_config()
+
         # 设置基础绘图风格
         try:
             plt.style.use('seaborn-v0_8-whitegrid')
         except OSError:
             plt.style.use('ggplot')
 
-        font_path = '/System/Library/Fonts/STHeiti Light.ttc' # Mac 黑体
+        # 根据操作系统选择字体路径
+        if sys.platform.startswith('win'):
+            font_path = cfg['font']['path_win']
+        else:
+            font_path = cfg['font']['path_mac']
 
         # 加载字体
         if os.path.exists(font_path):

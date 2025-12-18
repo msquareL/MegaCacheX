@@ -195,12 +195,17 @@ class GroundDataCenter(Node):
         self.position[2] = EARTH_RADIUS * math.sin(rad_lat)
 
 class MegaConstellation:
-    def __init__(self):
+    def __init__(self, sat_file, sdc_file, gs_file):
         self.graph = nx.Graph()
         self.satellites = {}
         self.sdcs = {}
         self.ground_stations = {}
-        self.contents = {} 
+        self.contents = {}
+
+        # 加载卫星和地面站
+        self.load_tle_file(sat_file, 'satellite')
+        self.load_tle_file(sdc_file, 'sdc')
+        self.load_gs_csv(gs_file)
     
     def load_tle_file(self, filename, node_type):
         """加载TLE文件"""
