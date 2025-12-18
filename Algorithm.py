@@ -1,6 +1,33 @@
 from Classes import User
+import math
+import random
 
-def mlc3(mc, requests, stats, user_coord_iterator):
+def get_activity_weight(lon, current_utc_timestamp):
+    """
+    根据经度和当前 UTC 时间，计算当地活跃度权重 (0.1 ~ 1.0)
+    模拟"日出而作，日落而息"的互联网潮汐效应
+    """
+    # 计算当地时间
+    utc_seconds = current_utc_timestamp % 86400
+    utc_hour = utc_seconds / 3600.0
+    
+    # 经度偏移: 东经加，西经减
+    offset = lon / 15.0
+    local_hour = (utc_hour + offset) % 24
+    
+    # 定义活跃度曲线
+    if 0 <= local_hour < 6:
+        return 0.1  # 深夜睡眠 (权重极低)
+    elif 6 <= local_hour < 9:
+        return 0.4  # 早起 (逐渐上升)
+    elif 9 <= local_hour < 18:
+        return 0.8  # 工作时间 (平稳)
+    elif 18 <= local_hour < 23:
+        return 1.0  # 晚高峰 (最高)
+    else: # 23 - 24
+        return 0.5  # 睡前
+
+def mlc3(mc, requests, current_time, stats, user_coords_list):
     """
     处理当前时间步的所有请求
     """
@@ -10,14 +37,22 @@ def mlc3(mc, requests, stats, user_coord_iterator):
 
     aggregation_map = {} # 聚合字典，用于累加延迟数据
 
-    for req in requests:
+    # 计算用户权重
+    weights = []
+    for (lat, lon) in user_coords_list:
+        w = get_activity_weight(lon, current_time)
+        weights.append(w)
+
+    # 批量抽样
+    assigned_locations = random.choices(user_coords_list, weights=weights, k=len(requests))
+
+    for req, (u_lat, u_lon) in zip(requests, assigned_locations):
         content = req['content']
         # 更新内容热度
         content.update_popularity(1)
-        
-        lat, lon = next(user_coord_iterator)
+
         # 创建临时 User 对象
-        temp_user = User(f"User_{lat:.2f}_{lon:.2f}", lat, lon)
+        temp_user = User(f"User_{u_lat:.2f}_{u_lon:.2f}", u_lat, u_lon)
         
         # 寻找最近接入卫星
         min_dist = float('inf')

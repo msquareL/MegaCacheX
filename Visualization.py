@@ -69,7 +69,7 @@ class ResultVisualizer:
 
     def plot_3d_topology(self, mc, save_name='Result_3D_Topology.png'):
         """
-        图3: 画 3D 星座拓扑快照
+        画 3D 星座拓扑快照
         """
         fig = plt.figure(figsize=(12, 10))
         ax = fig.add_subplot(111, projection='3d')
@@ -111,12 +111,3 @@ class ResultVisualizer:
         plt.savefig(save_name, dpi=300)
         print(f"  - 已保存: {save_name}")
         plt.close()
-
-    def plot_all(self, all_latencies, timestamps, avg_latencies, mc):
-        """
-        一键生成所有图表
-        """
-        print("\n[Visualization] 正在生成汇报图表...")
-        self.plot_latency_cdf(all_latencies)
-        self.plot_3d_topology(mc)
-        print("[Visualization] 所有图表生成完毕。")
