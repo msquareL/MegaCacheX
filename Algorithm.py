@@ -235,7 +235,7 @@ def mlc3(mc, requests, current_time, stats, user_coords_list, gs_history_recorde
 def execute_tier3_caching(mc, gs_history_recorder):
     """
     【新增函数】Tier-3 地面站缓存决策
-    基于收集到的历史请求进行打分 (Equation 4)
+    基于收集到的历史请求进行打分
     """
     for gs_id, history_records in gs_history_recorder.items():
         if gs_id not in mc.ground_stations:

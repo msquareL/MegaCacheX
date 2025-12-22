@@ -49,7 +49,7 @@ def run_simulation():
         requests = mc.load_trace_batch(trace_file, current_time, time_step)
         print(f"  - 本轮 Trace 请求数: {len(requests)}")
 
-        current_step_latencies = mlc3(mc, requests, global_stats, user_coord_iter, gs_history_recorder)
+        current_step_latencies = mlc3(mc, requests, current_time, global_stats, user_coords_list, gs_history_recorder)
 
         execute_tier3_caching(mc, gs_history_recorder)
 
