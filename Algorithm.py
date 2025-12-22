@@ -27,7 +27,7 @@ def get_activity_weight(lon, current_utc_timestamp):
     else: # 23 - 24
         return 0.5  # 睡前
 
-def mlc3(mc, requests, current_time, stats, user_coords_list):
+def mlc3(mc, requests, current_time, stats, user_coords_list, gs_history_recorder):
     """
     处理当前时间步的所有请求
     """
@@ -74,6 +74,28 @@ def mlc3(mc, requests, current_time, stats, user_coords_list):
 
         # 计算第一跳延迟 (User -> Access Sat)
         first_hop_latency = min_dist / 299792.458 #+ content.size / 12.5
+
+        SPEED_OF_LIGHT = 299792.458
+        LATENCY_THRESHOLD = 0.050
+        if access_sat.id in mc.graph:
+            for neighbor_id in mc.graph.neighbors(access_sat.id):
+                # 判断邻居是不是地面站
+                if neighbor_id in mc.ground_stations:
+                    # 获取 卫星->地面站 的距离权重
+                    dist_sat_gs = mc.graph[access_sat.id][neighbor_id]['weight']
+                    lat_sat_gs = dist_sat_gs / SPEED_OF_LIGHT
+                    
+                    # 计算总延迟: 用户->卫星 + 卫星->地面站
+                    total_local_latency = first_hop_latency + lat_sat_gs
+                    
+                    if total_local_latency <= LATENCY_THRESHOLD:
+                        if neighbor_id not in gs_history_recorder:
+                            gs_history_recorder[neighbor_id] = []
+                        
+                        gs_history_recorder[neighbor_id].append({
+                            'content': req['content'],
+                            'local_latency': total_local_latency
+                        })
 
         # 寻找最近的内容副本
         best_path = None
@@ -209,3 +231,50 @@ def mlc3(mc, requests, current_time, stats, user_coords_list):
             print(f"      [Cache] {user_id} -> {node.id} 存入 {content.id} (Score:{score:.2f})")
 
     return step_latencies
+
+def execute_tier3_caching(mc, gs_history_recorder):
+    """
+    【新增函数】Tier-3 地面站缓存决策
+    基于收集到的历史请求进行打分 (Equation 4)
+    """
+    for gs_id, history_records in gs_history_recorder.items():
+        if gs_id not in mc.ground_stations:
+            continue
+            
+        gs = mc.ground_stations[gs_id]
+        total_records = len(history_records)
+        if total_records == 0:
+            continue
+
+        # 聚合统计 (统计每个内容在历史中出现了几次，平均本地延迟是多少)
+        content_stats = {}
+        for record in history_records:
+            content = record['content']
+            lat = record['local_latency']
+            
+            if content not in content_stats:
+                content_stats[content] = {'count': 0, 'sum_lat': 0.0}
+            
+            content_stats[content]['count'] += 1
+            content_stats[content]['sum_lat'] += lat
+        
+        # 计算打分
+        scores = []
+        for content, stats in content_stats.items():
+            term1 = stats['count'] / total_records
+            
+            avg_local_lat = stats['sum_lat'] / stats['count']
+            avg_remote_lat = 0.200 # 假设远程延迟为 200ms
+
+            term2 = avg_remote_lat / avg_local_lat if avg_local_lat > 0 else 1.0 
+            
+            term3 = content.size / gs.capacity
+            
+            final_score = term1 * term2 * term3
+            scores.append((final_score, content))
+        
+        # 排序并执行缓存
+        scores.sort(key=lambda x: x[0], reverse=True)
+        
+        for score, content in scores:
+            gs.cache_content(content)

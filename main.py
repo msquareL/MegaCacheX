@@ -1,6 +1,6 @@
 from Classes import MegaConstellation
 from config import get_config
-from Algorithm import mlc3
+from Algorithm import mlc3, execute_tier3_caching
 from Utils import load_user_coordinates, get_trace_start_time
 import itertools
 import Visualization
@@ -31,9 +31,12 @@ def run_simulation():
     current_time = start_timestamp
     end_time = start_timestamp + simulation_duration
 
+    gs_history_recorder = {} # 全局的地面站请求历史记录器
     history_avg_latencies = [] # 每个时间步的平均延迟 (ms)
     all_request_latencies = [] # 所有请求的延迟 (秒)
     global_stats = {'total_hits': 0} # 全局统计命中次数
+
+    MAX_HISTORY_PER_GS = 5000
 
     while current_time < end_time:
         print(f"\n[Time: {current_time:.1f}] 正在更新拓扑...")
@@ -46,7 +49,15 @@ def run_simulation():
         requests = mc.load_trace_batch(trace_file, current_time, time_step)
         print(f"  - 本轮 Trace 请求数: {len(requests)}")
 
-        current_step_latencies = mlc3(mc, requests, global_stats, user_coord_iter)
+        current_step_latencies = mlc3(mc, requests, global_stats, user_coord_iter, gs_history_recorder)
+
+        execute_tier3_caching(mc, gs_history_recorder)
+
+        # 滑动窗口，限制历史记录大小，防止内存爆炸
+        for gs_id in gs_history_recorder:
+            if len(gs_history_recorder[gs_id]) > MAX_HISTORY_PER_GS:
+                # 截断，只保留最近的 N 条
+                gs_history_recorder[gs_id] = gs_history_recorder[gs_id][-MAX_HISTORY_PER_GS:]
 
         if current_step_latencies:
             all_request_latencies.extend(current_step_latencies)

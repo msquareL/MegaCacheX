@@ -11,7 +11,7 @@ from collections import OrderedDict
 
 # 物理常数
 SPEED_OF_LIGHT = 299792.458  # km/s (c)
-SPEED_OF_FIBER = SPEED_OF_LIGHT * 0.667  # 光纤光速 (km/s)
+# SPEED_OF_FIBER = SPEED_OF_LIGHT * 0.667  # 光纤光速 (km/s)
 EARTH_RADIUS = 6371.0        # km
 
 # 链路带宽配置 (单位: MB/s)
@@ -407,14 +407,28 @@ class MegaConstellation:
         
         # 连接 GS
         if self.ground_stations:
-            for gs in self.ground_stations.values():
-                # k=1：离 GS 最近的 1 个卫星
-                dist, idx = tree.query(gs.position, k=1)
+            gs_objs = list(self.ground_stations.values())
+            # 地面站坐标是静态的，提取出来
+            gs_coords = [gs.position for gs in gs_objs]
+            gs_ids = [gs.id for gs in gs_objs]
+            
+            # 构建地面站的 KD-Tree
+            gs_tree = cKDTree(np.array(gs_coords))
+            
+            # 半径搜索 (Query Ball Point)
+            indices_list = gs_tree.query_ball_point(sat_coords_np, r=2500)
+            
+            # 遍历查询结果，添加所有的边
+            for i, neighbor_idxs in enumerate(indices_list):
+                sat = sat_objs[i]
                 
-                # 设置 2500km 为地面站最大通信距离
-                if dist < 2500: 
-                    target_sat_id = sat_ids[idx]
-                    self.graph.add_edge(gs.id, target_sat_id, weight=dist, type='GSL')
+                for gs_idx in neighbor_idxs:
+                    target_gs = gs_objs[gs_idx]
+                    
+                    # KD-Tree 的 query_ball_point 只返回下标，不返回距离，需手动算一下
+                    dist = sat.get_distance(target_gs)
+                    
+                    self.graph.add_edge(sat.id, target_gs.id, weight=dist, type='GSL')
 
     def get_link_delay(self, u, v, content_size):
         """
@@ -435,7 +449,7 @@ class MegaConstellation:
             prop_speed = SPEED_OF_LIGHT
         else: # IGL
             bandwidth = BANDWIDTH_IGL
-            prop_speed = SPEED_OF_FIBER
+            prop_speed = SPEED_OF_LIGHT * 0.667
 
         # 传播延迟 (物理距离 / 速度)
         prop_delay = dist / prop_speed
