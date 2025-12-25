@@ -73,22 +73,21 @@ def mlc3(mc, requests, current_time, stats, user_coords_list, gs_history_recorde
         routing_start_node_id = access_sat.id
 
         # 计算第一跳延迟 (User -> Access Sat)
-        first_hop_latency = min_dist / 299792.458 #+ content.size / 12.5
+        first_hop_latency = min_dist / 299792.458
 
-        SPEED_OF_LIGHT = 299792.458
-        LATENCY_THRESHOLD = 0.050
+        # 记录本地请求历史，用于 Tier-3 地面站缓存决策
         if access_sat.id in mc.graph:
             for neighbor_id in mc.graph.neighbors(access_sat.id):
                 # 判断邻居是不是地面站
                 if neighbor_id in mc.ground_stations:
                     # 获取 卫星->地面站 的距离权重
                     dist_sat_gs = mc.graph[access_sat.id][neighbor_id]['weight']
-                    lat_sat_gs = dist_sat_gs / SPEED_OF_LIGHT
+                    lat_sat_gs = dist_sat_gs / 299792.458
                     
                     # 计算总延迟: 用户->卫星 + 卫星->地面站
                     total_local_latency = first_hop_latency + lat_sat_gs
                     
-                    if total_local_latency <= LATENCY_THRESHOLD:
+                    if total_local_latency <= 0.050:
                         if neighbor_id not in gs_history_recorder:
                             gs_history_recorder[neighbor_id] = []
                         
@@ -136,8 +135,6 @@ def mlc3(mc, requests, current_time, stats, user_coords_list, gs_history_recorde
         if best_path:
             # min_path_latency 是包含了 User->Sat->...->SDC 的全链路延迟
             latency_sat = min_path_latency
-            
-            latency_gs = 0.200
 
             final_request_latency = 0.0
 
@@ -202,39 +199,51 @@ def mlc3(mc, requests, current_time, stats, user_coords_list, gs_history_recorde
                 'user_id': f"Aggregated({data['req_count']})"
             })
 
-    # 按分数排序，优先缓存高分内容
+    # 按分数从高到低排序
     potential_actions.sort(key=lambda x: x['score'], reverse=True)
 
-    sat_new_usage = {}
+    sat_new_usage = {} # 记录每颗卫星的新使用容量
+
+    actions_to_execute = [] # 记录最终要执行的缓存动作
+
+    # 预处理即将缓存的内容，按照得分从小到大的顺序，防止高分内容被低分内容挤掉
+    for action in potential_actions:
+        node = action['node']
+        content = action['content']
+        
+        # 初始化计数器
+        if node.id not in sat_new_usage:
+            sat_new_usage[node.id] = 0.0
+        
+        # 已经缓存了，直接加入执行列表，刷新热度
+        if content in node.cached_contents:
+            actions_to_execute.append(action)
+            continue
+            
+        # 检查容量配额，分数高的内容先缓存
+        if sat_new_usage[node.id] + content.size <= node.capacity:
+            sat_new_usage[node.id] += content.size
+            actions_to_execute.append(action)
+        else:
+            continue
 
     count_cached = 0
-    for action in potential_actions:
+    # 执行缓存动作，按照得分从低到高执行，高分内容占据最新位置
+    for action in reversed(actions_to_execute):
         node = action['node']
         content = action['content']
         score = action['score']
         user_id = action['user_id']
 
-        # 初始化计数器
-        if node.id not in sat_new_usage:
-            sat_new_usage[node.id] = 0.0
-        
-        if content in node.cached_contents:
-            continue 
-        
-        # 检查容量，容量不足则跳过
-        if sat_new_usage[node.id] + content.size > node.capacity:
-            continue
-
         if node.cache_content(content):
             count_cached += 1
-            sat_new_usage[node.id] += content.size
             print(f"      [Cache] {user_id} -> {node.id} 存入 {content.id} (Score:{score:.2f})")
 
     return step_latencies
 
 def execute_tier3_caching(mc, gs_history_recorder):
     """
-    【新增函数】Tier-3 地面站缓存决策
+    Tier-3 地面站缓存决策
     基于收集到的历史请求进行打分
     """
     for gs_id, history_records in gs_history_recorder.items():
@@ -246,7 +255,7 @@ def execute_tier3_caching(mc, gs_history_recorder):
         if total_records == 0:
             continue
 
-        # 聚合统计 (统计每个内容在历史中出现了几次，平均本地延迟是多少)
+        # 统计每个内容在历史中出现了几次，平均本地延迟是多少
         content_stats = {}
         for record in history_records:
             content = record['content']
@@ -272,9 +281,14 @@ def execute_tier3_caching(mc, gs_history_recorder):
             
             final_score = term1 * term2 * term3
             scores.append((final_score, content))
-        
-        # 排序并执行缓存
-        scores.sort(key=lambda x: x[0], reverse=True)
-        
+
+        # 按照分数由低到高排序
+        scores.sort(key=lambda x: x[0], reverse=False)
+
         for score, content in scores:
+            content = score['content']
+            
             gs.cache_content(content)
+            # print(f"GS {gs.id} cached {content.id} (Score high, safe at back)")
+            
+

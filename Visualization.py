@@ -12,7 +12,8 @@ class ResultVisualizer:
 
         # 设置基础绘图风格
         try:
-            plt.style.use('seaborn-v0_8-whitegrid')
+            plt.style.use(['science','ieee'])
+            # plt.style.use('seaborn-v0_8-whitegrid')
         except OSError:
             plt.style.use('ggplot')
 

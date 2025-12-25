@@ -86,7 +86,7 @@ class Node:
 
         # 未命中，容量不够，删除最老的数据
         while not self.has_space(content.size):
-            # 文件大于卫星总容量
+            # 文件大于节点总容量
             if not self.cached_contents:
                 return False
             
@@ -405,38 +405,38 @@ class MegaConstellation:
                     target_sat_id = sat_ids[idx]
                     self.graph.add_edge(sdc.id, target_sat_id, weight=dist, type='ISL')
         
-        if self.ground_stations:
-            for gs in self.ground_stations.values():
-                # k=1：离 GS 最近的 1 个卫星
-                dist, idx = tree.query(gs.position, k=1)
-                # 设置 2500km 为地面站最大通信距离
-                if dist < 2500:
-                    target_sat_id = sat_ids[idx]
-                    self.graph.add_edge(gs.id, target_sat_id, weight=dist, type='GSL')
-        # 连接 GS
         # if self.ground_stations:
-        #     gs_objs = list(self.ground_stations.values())
-        #     # 地面站坐标是静态的，提取出来
-        #     gs_coords = [gs.position for gs in gs_objs]
-        #     gs_ids = [gs.id for gs in gs_objs]
+        #     for gs in self.ground_stations.values():
+        #         # k=1：离 GS 最近的 1 个卫星
+        #         dist, idx = tree.query(gs.position, k=1)
+        #         # 设置 2500km 为地面站最大通信距离
+        #         if dist < 2500:
+        #             target_sat_id = sat_ids[idx]
+        #             self.graph.add_edge(gs.id, target_sat_id, weight=dist, type='GSL')
+        # 连接 GS
+        if self.ground_stations:
+            gs_objs = list(self.ground_stations.values())
+            # 地面站坐标是静态的，提取出来
+            gs_coords = [gs.position for gs in gs_objs]
+            gs_ids = [gs.id for gs in gs_objs]
             
-        #     # 构建地面站的 KD-Tree
-        #     gs_tree = cKDTree(np.array(gs_coords))
+            # 构建地面站的 KD-Tree
+            gs_tree = cKDTree(np.array(gs_coords))
             
-        #     # 半径搜索 (Query Ball Point)
-        #     indices_list = gs_tree.query_ball_point(sat_coords_np, r=2500)
+            # 半径搜索 (Query Ball Point)
+            indices_list = gs_tree.query_ball_point(sat_coords_np, r=2500)
             
-        #     # 遍历查询结果，添加所有的边
-        #     for i, neighbor_idxs in enumerate(indices_list):
-        #         sat = sat_objs[i]
+            # 遍历查询结果，添加所有的边
+            for i, neighbor_idxs in enumerate(indices_list):
+                sat = sat_objs[i]
                 
-        #         for gs_idx in neighbor_idxs:
-        #             target_gs = gs_objs[gs_idx]
+                for gs_idx in neighbor_idxs:
+                    target_gs = gs_objs[gs_idx]
                     
-        #             # KD-Tree 的 query_ball_point 只返回下标，不返回距离，需手动算一下
-        #             dist = sat.get_distance(target_gs)
+                    # KD-Tree 的 query_ball_point 只返回下标，不返回距离，需手动算一下
+                    dist = sat.get_distance(target_gs)
                     
-        #             self.graph.add_edge(sat.id, target_gs.id, weight=dist, type='GSL')
+                    self.graph.add_edge(sat.id, target_gs.id, weight=dist, type='GSL')
 
     def get_link_delay(self, u, v, content_size):
         """
